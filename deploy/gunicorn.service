@@ -1,0 +1,24 @@
+[Unit]
+Description=Yueya Oral API (gunicorn + uvicorn worker)
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+# 放到你的部署目录（含 api/.env、uploads/、data/）
+WorkingDirectory=/var/www/yueya/api
+# api 自动用 python-dotenv 读取 .env；此处 EnvironmentFile 仅作显式注入（支持 # 注释行）
+EnvironmentFile=/var/www/yueya/api/.env
+ExecStart=/var/www/yueya/api/venv/bin/gunicorn app.main:app \
+    --workers 4 \
+    --worker-class uvicorn.workers.UvicornWorker \
+    --bind 127.0.0.1:8000 \
+    --timeout 60 \
+    --access-logfile /var/log/yueya/api.access.log \
+    --error-logfile /var/log/yueya/api.error.log
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

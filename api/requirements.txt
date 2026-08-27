@@ -1,0 +1,25 @@
+# 悦芽口腔 后端依赖清单（api/）
+# 运行环境：Python 3.13.12（使用隔离 venv，不污染用户环境）
+# 安装：venv 内 pip install -r requirements.txt
+
+# ---- Web 框架 ----
+fastapi==0.115.0          # 主框架，提供路由/依赖注入/Swagger
+uvicorn[standard]==0.30.6 # ASGI 服务器（开发用 --reload）
+
+# ---- 数据库 ----
+SQLAlchemy==2.0.35        # ORM 2.x（声明式模型）
+alembic==1.13.2           # 数据库迁移工具
+# 注意：SQLite 为单文件，无需额外驱动；如切 Postgres 再装 psycopg2-binary
+
+# ---- 数据校验 / 序列化 ----
+pydantic==2.9.2           # 请求/响应模型（v2）
+pydantic-settings==2.5.2  # 读取 .env 配置（SettingConfigDict）
+
+# ---- 鉴权 / 安全 ----
+PyJWT==2.9.0              # 双 JWT 签发与校验（家长 / 管理员）
+bcrypt==4.0.1             # 密码哈希（security.py 直接调用，避开 passlib 与 bcrypt5 兼容问题）
+python-multipart==0.0.12  # 支持表单/文件上传（素材上传接口用）
+
+# ---- 配置 / 工具 ----
+python-dotenv==1.0.1      # 加载 .env 文件
+tzdata==2024.2            # 时区数据（Asia/Shanghai 转换用，Windows 必需）

@@ -1,0 +1,4 @@
+node_modules/
+dist/
+.npmcache/
+_old_dist_*/

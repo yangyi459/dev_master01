@@ -1,0 +1,31 @@
+/* 后台全局样式：Tailwind 指令（preflight 已在 tailwind.config 关闭，保护 AntD 样式）
+   + 设计 Token CSS 变量（对齐 UI/UX §9 / 方案 §22）。 */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --c-brand: #ff7a45;
+    --c-brand-ink: #9a3412;
+    --c-cta-text: #4a1500;
+    --c-ink: #1f2937;
+    --c-sub: #5b6472;
+    --c-line: #e8ebef;
+    --c-bg: #ffffff;
+    --c-soft: #fff4ee;
+    --c-mist: #f6f7f9;
+    --c-teal: #16a6a6;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    margin: 0;
+    background: var(--c-mist);
+    color: var(--c-ink);
+    font-family: -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  }
+}

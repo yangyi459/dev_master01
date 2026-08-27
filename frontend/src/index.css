@@ -1,0 +1,150 @@
+/* 全局样式：Tailwind 指令 + 设计 Token 基础层（对齐 UI/UX §9 / 方案 §22） */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --c-brand: #ff7a45;
+    --c-brand-ink: #9a3412;
+    --c-cta-text: #4a1500;
+    --c-ink: #1f2937;
+    --c-sub: #5b6472;
+    --c-line: #e8ebef;
+    --c-bg: #ffffff;
+    --c-soft: #fff4ee;
+    --c-teal: #16a6a6;
+    --c-mist: #f6f7f9;
+    --maxw: 1160px;
+  }
+  html,
+  body {
+    @apply bg-white text-ink font-sans antialiased;
+    scroll-behavior: smooth;
+    scroll-padding-top: 5rem; /* 为 sticky 导航留出 64px+ 偏移，锚点定位更准确 */
+  }
+  a {
+    @apply text-inherit;
+  }
+}
+
+@layer components {
+  /* 内容容器：居中 + 最大宽 1160，左右留白 */
+  .container-content {
+    @apply mx-auto w-full max-w-content px-4 sm:px-6;
+  }
+  /* 品牌主按钮：橙底深棕字，hover 略深 */
+  .btn-brand {
+    @apply inline-flex items-center justify-center rounded-full bg-brand px-6 py-2.5 text-sm font-semibold text-cta-text transition hover:bg-[#ff8c5e];
+  }
+  .btn-ghost {
+    @apply inline-flex items-center justify-center rounded-full border border-line px-6 py-2.5 text-sm font-semibold text-ink transition hover:border-brand hover:text-brand;
+  }
+  /* 卡片 */
+  .card {
+    @apply rounded-2xl border border-line bg-white;
+  }
+  /* 表单控件统一样式（输入/下拉/文本域） */
+  .input {
+    @apply w-full rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/20;
+  }
+  .input:disabled {
+    @apply cursor-not-allowed bg-mist text-sub;
+  }
+  /* 区块标题 */
+  .section-title {
+    @apply text-2xl font-bold text-ink sm:text-3xl;
+  }
+  /* 后台富文本渲染（关于我们内容等）：preflight 清零了 p 外边距，这里补回段落间距 */
+  .about-html p {
+    @apply mb-3 last:mb-0;
+  }
+  .about-html b,
+  .about-html strong {
+    @apply font-semibold text-ink;
+  }
+  .about-html ul,
+  .about-html ol {
+    @apply my-3 list-inside pl-4;
+  }
+  .about-html ul {
+    @apply list-disc;
+  }
+  .about-html ol {
+    @apply list-decimal;
+  }
+
+  /* 科普/文章详情富文本：段落、标题、列表、图片、引用、表格 */
+  .article-html {
+    @apply text-base leading-7 text-ink;
+  }
+  @media (min-width: 640px) {
+    .article-html {
+      @apply text-lg leading-8;
+    }
+  }
+  .article-html p {
+    @apply mb-5 last:mb-0;
+  }
+  .article-html h2,
+  .article-html h3 {
+    @apply mt-10 mb-4 font-bold text-ink scroll-mt-24;
+  }
+  .article-html h2 {
+    @apply text-xl sm:text-2xl;
+  }
+  .article-html h3 {
+    @apply text-lg sm:text-xl;
+  }
+  .article-html ul,
+  .article-html ol {
+    @apply my-4 pl-6;
+  }
+  .article-html ul {
+    @apply list-disc;
+  }
+  .article-html ol {
+    @apply list-decimal;
+  }
+  .article-html li {
+    @apply mb-1.5;
+  }
+  .article-html img {
+    @apply my-5 rounded-2xl border border-line bg-soft;
+  }
+  .article-html blockquote {
+    @apply my-5 rounded-xl border-l-4 border-brand bg-soft/60 p-4 text-sub italic;
+  }
+  .article-html a {
+    @apply text-brand underline underline-offset-2 hover:text-brand-ink;
+  }
+  .article-html table {
+    @apply my-5 w-full overflow-hidden rounded-xl border border-line text-sm;
+  }
+  .article-html th,
+  .article-html td {
+    @apply border-b border-line px-4 py-2 text-left;
+  }
+  .article-html th {
+    @apply bg-mist font-semibold text-ink;
+  }
+  .article-html tr:last-child td {
+    @apply border-b-0;
+  }
+  /* 状态徽标（四态：pending/confirmed/done/cancel） */
+  .pill {
+    @apply inline-flex items-center rounded-full px-3 py-1 text-xs font-medium;
+  }
+  .pill-pending {
+    @apply bg-[#FFF4D6] text-[#9A6B00];
+  }
+  .pill-confirmed {
+    @apply bg-[#E6F0FF] text-[#1E5BC6];
+  }
+  .pill-done {
+    @apply bg-[#E9F8EF] text-[#1B7F4B];
+  }
+  .pill-cancel {
+    @apply bg-[#F0F1F3] text-[#8A94A0];
+  }
+}

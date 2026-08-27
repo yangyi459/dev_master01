@@ -1,0 +1,49 @@
+# ---------- 依赖与构建产物 ----------
+
+# Python 虚拟环境
+venv/
+.venv/
+env/
+.env/
+
+# Node 依赖
+node_modules/
+
+# 构建产物
+dist/
+build/
+_old_dist_*/
+*.timestamp-*.mjs
+
+# 日志
+*.log
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ---------- 环境与密钥 ----------
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# ---------- 编辑器 / 系统 ----------
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ---------- 工具内部数据 ----------
+.workbuddy/
+
+# ---------- 项目运行数据 ----------
+api/uploads/
+api/data/
