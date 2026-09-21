@@ -161,7 +161,7 @@ export default function Home() {
             title="品牌故事"
             sub="了解我们的初心与理念"
             cta="了解品牌故事"
-            to="/about"
+            to="/about#brand-story"
           />
         </div>
       </Section>

@@ -13,12 +13,26 @@ CMS 相关 Pydantic 模型（app.schemas.cms）
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 # ---- 通用配置：允许从 ORM 对象直接构造 ----
 class ORMModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_none_str(cls, data: Any) -> Any:
+        """兼容存量数据：DB 中新增的 Text 列可能为 NULL（ALTER TABLE 加列无默认值）。
+        Pydantic v2 的 from_attributes 会直接读取 None，且不会触发 `= ""` 默认值，
+        导致 `str` 字段校验失败、接口 500。此处把 None 的 str 字段回填为空串。"""
+        if isinstance(data, dict):
+            for k, v in list(data.items()):
+                if v is None:
+                    fld = cls.model_fields.get(k)
+                    if fld is not None and fld.annotation is str:
+                        data[k] = ""
+        return data
 
 
 # ========== 站点配置 ==========
@@ -116,6 +130,15 @@ class ServiceOut(ORMModel):
     intro: str = ""
     flow: str = ""      # JSON 字符串，响应层解析
     faq: str = ""       # JSON 字符串
+    # 富内容章节（前台详情页分章节展示）
+    principle: str = ""
+    suitable: str = ""
+    unsuitable: str = ""
+    prepare: str = ""
+    aftercare: str = ""
+    review_cycle: str = ""
+    risks: str = ""
+    highlights: str = ""
     sort: int = 0
     status: int = 1
 
@@ -129,6 +152,14 @@ class ServiceCreate(BaseModel):
     intro: str = ""
     flow: str = "[]"
     faq: str = "[]"
+    principle: str = ""
+    suitable: str = ""
+    unsuitable: str = ""
+    prepare: str = ""
+    aftercare: str = ""
+    review_cycle: str = ""
+    risks: str = ""
+    highlights: str = ""
     sort: int = 0
     status: int = 1
 
@@ -142,6 +173,14 @@ class ServiceUpdate(BaseModel):
     intro: str | None = None
     flow: str | None = None
     faq: str | None = None
+    principle: str | None = None
+    suitable: str | None = None
+    unsuitable: str | None = None
+    prepare: str | None = None
+    aftercare: str | None = None
+    review_cycle: str | None = None
+    risks: str | None = None
+    highlights: str | None = None
     sort: int | None = None
     status: int | None = None
 
@@ -156,6 +195,12 @@ class CaseOut(ORMModel):
     age_bucket: str = ""
     anonymous_desc: str = ""
     summary: str = ""
+    # 富章节（前台详情页分章节展示）
+    doctor_id: int | None = None
+    timeline: str = ""
+    advice: str = ""
+    followup: str = ""
+    notes: str = ""
     status: int = 0
 
 
@@ -167,6 +212,11 @@ class CaseCreate(BaseModel):
     age_bucket: str = ""
     anonymous_desc: str = ""
     summary: str = ""
+    doctor_id: int | None = None
+    timeline: str = ""
+    advice: str = ""
+    followup: str = ""
+    notes: str = ""
     status: int = 0
 
 
@@ -178,6 +228,11 @@ class CaseUpdate(BaseModel):
     age_bucket: str | None = None
     anonymous_desc: str | None = None
     summary: str | None = None
+    doctor_id: int | None = None
+    timeline: str | None = None
+    advice: str | None = None
+    followup: str | None = None
+    notes: str | None = None
     status: int | None = None
 
 
@@ -189,6 +244,7 @@ class ArticleOut(ORMModel):
     title: str
     summary: str = ""
     body: str = ""
+    key_points: str = ""
     cover: str = ""
     seo_title: str = ""
     seo_keywords: str = ""
@@ -204,6 +260,7 @@ class ArticleCreate(BaseModel):
     title: str
     summary: str = ""
     body: str = ""
+    key_points: str = ""
     cover: str = ""
     seo_title: str = ""
     seo_keywords: str = ""
@@ -218,6 +275,7 @@ class ArticleUpdate(BaseModel):
     title: str | None = None
     summary: str | None = None
     body: str | None = None
+    key_points: str | None = None
     cover: str | None = None
     seo_title: str | None = None
     seo_keywords: str | None = None
@@ -235,6 +293,12 @@ class DoctorOut(ORMModel):
     good_at: str = ""
     intro: str = ""
     avatar: str = ""
+    years: int = 0
+    graduated: str = ""
+    honors: str = ""
+    bio: str = ""
+    rating: float = 5.0
+    review_count: int = 0
     schedule_desc: str = ""
     sort: int = 0
     status: int = 1
@@ -247,6 +311,12 @@ class DoctorCreate(BaseModel):
     good_at: str = ""
     intro: str = ""
     avatar: str = ""
+    years: int = 0
+    graduated: str = ""
+    honors: str = ""
+    bio: str = ""
+    rating: float = 5.0
+    review_count: int = 0
     schedule_desc: str = ""
     sort: int = 0
     status: int = 1
@@ -259,6 +329,12 @@ class DoctorUpdate(BaseModel):
     good_at: str | None = None
     intro: str | None = None
     avatar: str | None = None
+    years: int | None = None
+    graduated: str | None = None
+    honors: str | None = None
+    bio: str | None = None
+    rating: float | None = None
+    review_count: int | None = None
     schedule_desc: str | None = None
     sort: int | None = None
     status: int | None = None

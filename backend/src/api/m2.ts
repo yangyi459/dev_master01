@@ -13,8 +13,10 @@ export const patchAppointmentStatus = (id: number, status: string) => apiPut(`/a
 export const assignAppointment = (id: number, advisorId: number) => apiPost(`/api/admin/appointments/${id}/assign`, { advisor_id: advisorId })
 export const confirmAppointment = (id: number, data: { store_id: number; doctor_id: number; date: string; slot: string }) =>
   apiPost(`/api/admin/appointments/${id}/confirm`, data)
+export const autoConfirmAppointment = (id: number) => apiPost(`/api/admin/appointments/${id}/auto-confirm`, {})
 export const arriveAppointment = (id: number) => apiPost(`/api/admin/appointments/${id}/arrive`, {})
 export const cancelAppointment = (id: number) => apiPost(`/api/admin/appointments/${id}/cancel`, {})
+export const noShowAppointment = (id: number) => apiPost(`/api/admin/appointments/${id}/no-show`, {})
 export const deleteAppointment = (id: number) => apiDelete(`/api/admin/appointments/${id}`)
 export const listFollowups = (id: number) => apiGet(`/api/admin/appointments/${id}/followups`)
 export const addFollowup = (id: number, content: string) => apiPost(`/api/admin/appointments/${id}/followups`, { content })
@@ -39,7 +41,7 @@ export const getAbout = () => apiGet('/api/admin/about')
 export const updateAbout = (block: string, data: { title?: string; content?: string }) => apiPut(`/api/admin/about/${block}`, data)
 
 // ========== 管理员 ==========
-export const listAdmins = () => apiGet('/api/admin/admins')
+export const listAdmins = (params?: { page?: number; page_size?: number }) => apiGet('/api/admin/admins', params)
 export const createAdmin = (data: any) => apiPost('/api/admin/admins', data)
 export const updateAdmin = (id: number, data: any) => apiPut(`/api/admin/admins/${id}`, data)
 export const toggleAdmin = (id: number, status: number) => apiPut(`/api/admin/admins/${id}`, { status })

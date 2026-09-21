@@ -31,6 +31,7 @@ from app.schemas.appointment import (
     AppointmentConfirmIn,
     AppointmentDetailOut,
     AppointmentSubmitIn,
+    AutoConfirmOut,
     FollowupIn,
     FollowupOut,
 )
@@ -38,12 +39,27 @@ from app.schemas.common import ApiResp, BusinessError, Paginated
 from app.services.appointment import (
     generate_appointment_no,
     occupy_schedule,
+    suggest_schedule,
     validate_transition,
 )
 from app.services.audit import audit_create, audit_update, write_log
 
 public_router = APIRouter(prefix="/api/public", tags=["public-appointment"])
 admin_router = APIRouter(prefix="/api/admin", tags=["admin-appointment"], dependencies=[Depends(get_current_admin)])
+
+
+import json as _json_mod
+
+
+def _parse_list(v: str | None) -> list:
+    """将 JSON 数组字符串安全解析为 list（chief_complaint 用）。"""
+    if not v:
+        return []
+    try:
+        arr = _json_mod.loads(v)
+        return arr if isinstance(arr, list) else []
+    except Exception:
+        return []
 
 
 # ---------- 可选家长依赖（匿名提交时用）----------
@@ -61,17 +77,30 @@ def optional_parent(
 
 
 # ================= 公开：提交预约 =================
-@public_router.post("/appointment", summary="提交预约（匿名/登录）")
+@public_router.post("/appointment", summary="提交预约（匿名/登录，选医生+时段提交即确认）")
 def submit_appointment(payload: AppointmentSubmitIn, parent: ParentUser | None = Depends(optional_parent), db: Session = Depends(get_db)):
     # 基础存在性校验
     if db.get(Store, payload.store_id) is None:
         return ApiResp(code=40400, message="门店不存在")
     if db.get(Service, payload.service_id) is None:
         return ApiResp(code=40400, message="诊疗项目不存在")
+    doctor = db.get(Doctor, payload.doctor_id)
+    if doctor is None:
+        return ApiResp(code=40400, message="医生不存在")
     if payload.child_id and db.get(ParentUser, payload.child_id) is None:
         # child_id 属于 children 表，这里仅做非空存在性由上层保证；忽略精确校验
         pass
     operator = parent.phone if parent else "anonymous"
+    # 预约流程改造 v2：提交即占用号源并置 confirmed；
+    # occupy_schedule 内部校验 存在/可约/未约满，冲突抛 BusinessError
+    from app.services.appointment import occupy_schedule
+
+    try:
+        occupy_schedule(db, payload.store_id, payload.doctor_id, payload.date, payload.slot)
+    except BusinessError as e:
+        return ApiResp(code=e.code, message=e.message)
+    import json as _json
+
     appt = Appointment(
         appointment_no=generate_appointment_no(db),
         parent_id=parent.id if parent else None,
@@ -82,19 +111,26 @@ def submit_appointment(payload: AppointmentSubmitIn, parent: ParentUser | None =
         child_age=payload.child_age,
         child_gender=payload.child_gender,
         first_visit=payload.first_visit or 0,
-        want_date=payload.want_date,
-        want_slot=payload.want_slot,
+        want_date=payload.date,
+        want_slot=payload.slot,
+        confirmed_store_id=payload.store_id,
+        confirmed_doctor_id=payload.doctor_id,
+        confirmed_date=payload.date,
+        confirmed_slot=payload.slot,
+        chief_complaint=_json.dumps(payload.chief_complaint or [], ensure_ascii=False),
+        allergy=payload.allergy or "",
+        is_emergency=payload.is_emergency or 0,
         contact_name=payload.contact_name,
         contact_phone=payload.contact_phone,
         note=payload.note,
         channel=payload.channel,
-        status="pending",
+        status="confirmed",
     )
     audit_create(appt, operator)
     db.add(appt)
     db.commit()
     db.refresh(appt)
-    return ApiResp(data={"appointment_no": appt.appointment_no, "id": appt.id}, message="预约提交成功")
+    return ApiResp(data={"appointment_no": appt.appointment_no, "id": appt.id, "status": "confirmed"}, message="预约成功，已为您锁定号源")
 
 
 # ================= 后台：预约列表 =================
@@ -134,7 +170,9 @@ def list_appointments(
                 appointment_no=a.appointment_no,
                 parent_phone=parent.phone if parent else "",
                 parent_nickname=parent.nickname if parent else "",
+                store_id=a.store_id or 0,
                 store_name=store.name if store else "",
+                service_id=a.service_id or 0,
                 service_name=service.name if service else "",
                 child_name=a.child_name or (child_obj.name if child_obj else ""),
                 child_age=a.child_age,
@@ -143,6 +181,11 @@ def list_appointments(
                 want_date=a.want_date,
                 want_slot=a.want_slot,
                 status=a.status,
+                is_no_show=a.is_no_show or 0,
+                chief_complaint=_parse_list(a.chief_complaint),
+                allergy=a.allergy or "",
+                is_emergency=a.is_emergency or 0,
+                advisor_id=a.advisor_id,
                 advisor_name=advisor.nickname if advisor else "",
                 confirmed_date=a.confirmed_date,
                 confirmed_slot=a.confirmed_slot,
@@ -208,6 +251,10 @@ def appointment_detail(aid: int, db: Session = Depends(get_db), admin: Admin = D
         channel=a.channel,
         cancel_reason=a.cancel_reason,
         status=a.status,
+        is_no_show=a.is_no_show or 0,
+        chief_complaint=_parse_list(a.chief_complaint),
+        allergy=a.allergy or "",
+        is_emergency=a.is_emergency or 0,
         created_date=a.created_date.strftime("%Y-%m-%d %H:%M:%S") if a.created_date else "",
         followups=fu,
     )
@@ -274,6 +321,49 @@ def confirm_appointment(aid: int, payload: AppointmentConfirmIn, db: Session = D
     return ApiResp(message="已确认排期")
 
 
+@admin_router.post("/appointments/{aid}/auto-confirm", summary="一键自动排期（按评分规则选最优医生）", dependencies=[Depends(require_permission("appointment:confirm"))])
+def auto_confirm_appointment(aid: int, db: Session = Depends(get_db), admin: Admin = Depends(get_current_admin)):
+    """方案 B：顾问一键自动排期。
+
+    复用 appointment:confirm 权限 + occupy_schedule + confirmed_* 写入 + 审计日志；
+    规则见 services.appointment.suggest_schedule。选不出号源时不强行确认，保留 pending。
+    """
+    a = db.query(Appointment).filter(Appointment.id == aid, Appointment.is_deleted == 0).first()
+    if a is None:
+        return ApiResp(code=40400, message="预约不存在")
+    if a.status != "pending":
+        return ApiResp(code=40900, message="仅待确认预约可自动排期")
+    # 只该预约意向门店/日期/时段内找号源（v1 不做跨门店兜底）
+    pick = suggest_schedule(db, a)
+    if pick is None:
+        return ApiResp(code=40900, message="该门店在意向日期时段无可约医生，请人工排期")
+    store_id, doctor_id, date, slot = pick
+    try:
+        occupy_schedule(db, store_id, doctor_id, date, slot)
+    except BusinessError as e:
+        return ApiResp(code=e.code, message=e.message)
+    doctor = db.get(Doctor, doctor_id)
+    store = db.get(Store, store_id)
+    a.confirmed_store_id = store_id
+    a.confirmed_doctor_id = doctor_id
+    a.confirmed_date = date
+    a.confirmed_slot = slot
+    a.advisor_id = admin.id
+    a.status = "confirmed"
+    audit_update(a, admin.username)
+    write_log(db, admin.id, "auto_confirm", "appointment", aid, f"自动排期 {date} {slot} 医生{doctor_id}", admin.username)
+    db.commit()
+    return ApiResp(
+        data=AutoConfirmOut(
+            doctor_name=doctor.name if doctor else "",
+            confirmed_date=date,
+            confirmed_slot=slot,
+            store_name=store.name if store else "",
+        ).model_dump(),
+        message="已自动排期",
+    )
+
+
 @admin_router.post("/appointments/{aid}/arrive", summary="标记到诊", dependencies=[Depends(require_permission("appointment:arrive"))])
 def arrive_appointment(aid: int, db: Session = Depends(get_db), admin: Admin = Depends(get_current_admin)):
     a = db.query(Appointment).filter(Appointment.id == aid, Appointment.is_deleted == 0).first()
@@ -297,22 +387,28 @@ def cancel_appointment(aid: int, db: Session = Depends(get_db), admin: Admin = D
         return ApiResp(code=40400, message="预约不存在")
     if a.status == "completed":
         return ApiResp(code=40900, message="已到诊预约不可取消")
-    # 已确认单取消时释放排班占用（§10 / 坑位 5）
-    if a.status == "confirmed" and a.confirmed_doctor_id and a.confirmed_date and a.confirmed_slot:
-        from app.models.appointment import Schedule
-
-        sched = (
-            db.query(Schedule)
-            .filter(Schedule.doctor_id == a.confirmed_doctor_id, Schedule.store_id == a.confirmed_store_id, Schedule.work_date == a.confirmed_date, Schedule.slot == a.confirmed_slot)
-            .first()
-        )
-        if sched:
-            sched.available = 1
+    # 已确认单取消时释放排班号源（§10 / 坑位 5，预约流程改造 v2）
+    if a.status == "confirmed" and a.confirmed_doctor_id and a.confirmed_store_id and a.confirmed_date and a.confirmed_slot:
+        release_schedule(db, a.confirmed_store_id, a.confirmed_doctor_id, a.confirmed_date, a.confirmed_slot)
     a.status = "cancelled"
     audit_update(a, admin.username)
     write_log(db, admin.id, "cancel", "appointment", aid, "取消预约", admin.username)
     db.commit()
     return ApiResp(message="已取消")
+
+
+@admin_router.post("/appointments/{aid}/no-show", summary="标记爽约", dependencies=[Depends(require_permission("appointment:confirm"))])
+def no_show_appointment(aid: int, db: Session = Depends(get_db), admin: Admin = Depends(get_current_admin)):
+    a = db.query(Appointment).filter(Appointment.id == aid, Appointment.is_deleted == 0).first()
+    if a is None:
+        return ApiResp(code=40400, message="预约不存在")
+    if a.status not in ("confirmed", "completed"):
+        return ApiResp(code=40900, message="仅已确认/已到诊预约可标记爽约")
+    a.is_no_show = 1
+    audit_update(a, admin.username)
+    write_log(db, admin.id, "no_show", "appointment", aid, "标记爽约", admin.username)
+    db.commit()
+    return ApiResp(message="已标记爽约")
 
 
 @admin_router.delete("/appointments/{aid}", summary="删除预约（软删）", dependencies=[Depends(require_permission("appointment:delete"))])

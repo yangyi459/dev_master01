@@ -27,8 +27,11 @@ class Schedule(AuditMixin, Base):
     work_date: Mapped[str] = mapped_column(String(10), comment="出诊日期 YYYY-MM-DD")
     # 时段，如 '09:00-10:00'；与 work_date + doctor_id 组合唯一，防同日同时段重复排班
     slot: Mapped[str] = mapped_column(String(20), comment="时段，如 09:00-10:00")
-    # available：1=可约 / 0=不可约（确认排期后置 0，见 §10 排班占用 / 坑位 5）
-    available: Mapped[int] = mapped_column(Integer, default=1, comment="1=可约 0=不可约")
+    # available：1=开放可约 / 0=停诊（管理员手动关，见 §10 排班占用 / 坑位 5）
+    available: Mapped[int] = mapped_column(Integer, default=1, comment="1=开放 0=停诊")
+    # quota/used：号源上限与已约数（预约流程改造 v2）。可约判定 = available==1 且 used<quota
+    quota: Mapped[int] = mapped_column(Integer, default=3, comment="号源上限（默认 3）")
+    used: Mapped[int] = mapped_column(Integer, default=0, comment="已约号数")
     # 唯一约束：同医生同日同时段仅一条（确认排期时占用，重复确认冲突，见 §10 / 坑位 5）
     __table_args__ = (
         UniqueConstraint(
@@ -82,6 +85,10 @@ class Appointment(AuditMixin, Base):
     # 意向时段（提交时填，确认后排期写入 confirmed_*）
     want_date: Mapped[str] = mapped_column(String(10), comment="意向日期 YYYY-MM-DD")
     want_slot: Mapped[str] = mapped_column(String(20), comment="意向时段")
+    # 预约流程改造 v2：提交即确认，主诉/过敏史/急诊结构化采集
+    chief_complaint: Mapped[str] = mapped_column(Text, default="", comment="主诉(JSON 数组，如 牙疼/龋齿)")
+    allergy: Mapped[str] = mapped_column(Text, default="", comment="过敏史")
+    is_emergency: Mapped[int] = mapped_column(Integer, default=0, comment="1=急诊 0=否")
     # 确认后排期信息（顾问确认时写入，并占用 schedules）
     confirmed_store_id: Mapped[int] = mapped_column(Integer, nullable=True, comment="确认门店")
     confirmed_doctor_id: Mapped[int] = mapped_column(Integer, nullable=True, comment="确认医生")
@@ -96,6 +103,8 @@ class Appointment(AuditMixin, Base):
     cancel_reason: Mapped[str] = mapped_column(Text, nullable=True, comment="取消原因（仅取消时填写，其余状态为空）")
     # status：VARCHAR 状态机 pending/confirmed/completed/cancelled（见 §18.5 / 坑位 4）
     status: Mapped[str] = mapped_column(String(20), default="pending", comment="pending/confirmed/completed/cancelled")
+    # is_no_show：爽约标志（预约流程改造 v2，不动状态机），仅 confirmed/completed 可标记
+    is_no_show: Mapped[int] = mapped_column(Integer, default=0, comment="1=爽约 0=否")
     # 软删：列表查询过滤 is_deleted（见 §10 / 坑位 11）
     is_deleted: Mapped[int] = mapped_column(Integer, default=0, comment="软删 1/0；列表过滤")
 

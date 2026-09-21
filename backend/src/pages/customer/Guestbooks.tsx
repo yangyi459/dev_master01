@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { Table, Tag, Button, Space, Input, Drawer, message, Popconfirm } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { listGuestbooks, patchGuestbookStatus, deleteGuestbook } from '../../api/m2'
+import TablePagination from '../../components/TablePagination'
 
 interface Row {
   id: number
@@ -135,13 +136,11 @@ export default function Guestbooks() {
         columns={columns}
         dataSource={data}
         loading={loading}
-        pagination={{
-          current: page,
-          pageSize: 10,
-          total,
-          onChange: (p) => setPage(p),
-        }}
+        pagination={false}
       />
+      <div className="mt-3">
+        <TablePagination total={total} pageSize={10} current={page} onChange={setPage} />
+      </div>
 
       <Drawer
         title="留言详情"

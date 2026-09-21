@@ -9,25 +9,36 @@
 依据：方案 §6 Admin/Public 预约、§10 预约状态机、§18 字段口径、§19 M2 任务。
 """
 
-from typing import List, Optional
+from datetime import datetime
+from typing import Any, List, Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_serializer
 
 
 # ========== 预约提交（POST /api/public/appointment）==========
 class AppointmentSubmitIn(BaseModel):
-    """提交预约（匿名可提交，登录态自动关联 parent_id，见 §6 Public appointment）。"""
+    """提交预约（匿名可提交，登录态自动关联 parent_id，见 §6 Public appointment）。
+
+    预约流程改造 v2：前台选 医生 + 日期 + 时段 后提交即确认（status=confirmed），
+    并占用对应 schedule 号源（used+1）。chief_complaint/allergy/is_emergency 为结构化采集。
+    """
 
     store_id: int
     service_id: int
+    # 预约流程改造 v2：必选医生 + 具体日期时段（提交即确认）
+    doctor_id: int
+    date: str  # 确认日期 YYYY-MM-DD（= 选定排班 work_date）
+    slot: str  # 确认时段，如 09:00-10:00
     child_id: Optional[int] = None  # 匿名时可为空
     # 匿名提交时家长填写的孩子信息（登录态优先用 child_id 关联档案）
     child_name: Optional[str] = None
     child_age: Optional[int] = None
     child_gender: Optional[int] = None
     first_visit: int = 0  # 是否首诊 1/0
-    want_date: str  # 意向日期 YYYY-MM-DD
-    want_slot: str  # 意向时段，如 09:00-10:00
+    # 结构化主诉 / 过敏史 / 急诊
+    chief_complaint: List[str] = []  # 主诉标签数组，如 ["牙疼","龋齿"]
+    allergy: str = ""  # 过敏史
+    is_emergency: int = 0  # 1=急诊 0=否
     contact_name: str
     contact_phone: str
     note: str = ""
@@ -67,18 +78,26 @@ class AppointmentDetailOut(BaseModel):
     channel: str = "web"
     cancel_reason: Optional[str] = None
     status: str = "pending"
+    is_no_show: int = 0
+    chief_complaint: List[str] = []
+    allergy: str = ""
+    is_emergency: int = 0
     created_date: str = ""
     followups: List["FollowupOut"] = []
 
 
 class AdminAppointmentItem(BaseModel):
-    """后台预约列表项（列对齐 §4.3.11：单号/家长/门店/项目/孩子/意向时段/状态/跟进顾问）。"""
+    """后台预约列表项（列对齐 §4.3.11：单号/家长/门店/项目/孩子/意向时段/状态/跟进顾问）。
+    store_id / service_id 在「确认排期」弹窗预填时使用，避免顾问重复选择。
+    """
 
     id: int
     appointment_no: str
     parent_phone: str = ""
     parent_nickname: str = ""
+    store_id: int = 0
     store_name: str = ""
+    service_id: int = 0
     service_name: str = ""
     child_name: str = ""
     child_age: Optional[int] = None
@@ -87,6 +106,11 @@ class AdminAppointmentItem(BaseModel):
     want_date: str = ""
     want_slot: str = ""
     status: str = "pending"
+    is_no_show: int = 0
+    chief_complaint: List[str] = []
+    allergy: str = ""
+    is_emergency: int = 0
+    advisor_id: Optional[int] = None
     advisor_name: str = ""
     confirmed_date: Optional[str] = None
     confirmed_slot: Optional[str] = None
@@ -120,6 +144,16 @@ class AppointmentConfirmIn(BaseModel):
     slot: str  # 确认时段
 
 
+# ========== 一键自动排期响应 ==========
+class AutoConfirmOut(BaseModel):
+    """顾问一键自动排期结果（POST /appointments/{aid}/auto-confirm 响应）。"""
+
+    doctor_name: str = ""  # 系统选中的医生姓名
+    confirmed_date: str = ""  # 确认日期（= 意向日期）
+    confirmed_slot: str = ""  # 确认时段（= 意向时段）
+    store_name: str = ""  # 门店名称
+
+
 # ========== 排班（M3-1 排班矩阵 / 批量生成）==========
 class ScheduleOut(BaseModel):
     """排班项（矩阵/列表响应，见 §6.2 schedules）。"""
@@ -132,6 +166,8 @@ class ScheduleOut(BaseModel):
     work_date: str
     slot: str
     available: int
+    quota: int
+    used: int
 
 
 class ScheduleCreateIn(BaseModel):
@@ -142,6 +178,7 @@ class ScheduleCreateIn(BaseModel):
     work_date: str  # YYYY-MM-DD
     slot: str
     available: int = 1
+    quota: int = 3
 
 
 class ScheduleBatchIn(BaseModel):
@@ -152,12 +189,14 @@ class ScheduleBatchIn(BaseModel):
     doctor_ids: List[int] = []  # 空 = 该门店全部医生
     slots: List[str] = ["09:00-10:00", "14:00-15:00", "16:00-17:00"]
     available: int = 1
+    quota: int = 3
 
 
 class ScheduleUpdateIn(BaseModel):
-    """切换可约状态（点击 available 0/1，schedule:edit）。"""
+    """切换可约状态 / 设置号源上限（schedule:edit）。两者均可单独更新。"""
 
-    available: int
+    available: int | None = None
+    quota: int | None = None
 
 
 # ========== 客户管理（patients）==========
@@ -242,7 +281,11 @@ class AdminOut(BaseModel):
 
 # ========== 留言管理（联系我们 / 在线客服）==========
 class GuestbookOut(BaseModel):
-    """后台留言列表项（前台联系我们 / 在线客服统一入口）。"""
+    """后台留言列表项（前台联系我们 / 在线客服统一入口）。
+
+    ORM 字段 created_date/updated_date 为 datetime，本 schema 统一在序列化时
+    输出 ISO 字符串，与前端 / 其它 schema 字段口径保持一致（见 §18.2）。
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -252,8 +295,12 @@ class GuestbookOut(BaseModel):
     content: str
     status: int = 0  # 0=未处理 / 1=已处理
     is_activate: int = 1
-    created_date: str = ""
-    updated_date: str = ""
+    created_date: datetime
+    updated_date: datetime
+
+    @field_serializer("created_date", "updated_date")
+    def _ser_dt(self, v: datetime | None) -> str:
+        return v.isoformat() if v else ""
 
 
 class GuestbookStatusIn(BaseModel):

@@ -2,6 +2,8 @@
 import type { ThemeConfig } from 'antd'
 
 // 功能说明：colorPrimary 用品牌橙 #FF7A45；圆角统一；其余沿用 AntD 默认。
+// 所有表格统一使用 <TablePagination/> 自定义紧凑分页，详见 components/TablePagination.tsx。
+// 表格内部一律 pagination={false}，由各自页面维护 page state + total。
 export const themeConfig: ThemeConfig = {
   token: {
     colorPrimary: '#FF7A45',

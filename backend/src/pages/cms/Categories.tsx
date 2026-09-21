@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react'
 import { Table, Button, Modal, Form, Input, InputNumber, Switch, Space, Popconfirm, Tag, Tabs, message } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { apiGet, apiPost, apiPut, apiDelete } from '../../api/client'
-
 const TABS = [
   { key: 'service', label: '诊疗项目分类' },
   { key: 'article', label: '文章分类' },
@@ -85,7 +84,7 @@ export default function Categories() {
                 loading={loading}
                 dataSource={data}
                 columns={columns}
-                pagination={{ pageSize: 10, showTotal: (tt) => `共 ${tt} 条` }}
+                pagination={false}
                 size="middle"
               />
             </div>

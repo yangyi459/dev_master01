@@ -2,11 +2,12 @@
 import axios from 'axios'
 
 // 功能说明：
-// - 基础路径为空（由 vite 代理转发 /api 到 FastAPI:8000）。
+// - 基础路径：优先读构建期环境变量 VITE_API_BASE_URL（上线后指向独立部署的 API 域名）；
+//   未配置时回退为 '/'，由 vite 开发代理转发 /api 到 FastAPI:8000（本地开发不变）。
 // - 后端统一返回信封 {code,message,data}；code=0 视为成功，其余抛错。
 // - 家长 JWT（parent_token）注入 Authorization；40100 时清除登录态。
 export const http = axios.create({
-  baseURL: '/',
+  baseURL: import.meta.env.VITE_API_BASE_URL || '/',
   timeout: 15000,
 })
 

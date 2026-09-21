@@ -1,13 +1,17 @@
-// 诊疗项目列表：Hero + 搜索 + 分类筛选 + 4 列卡片流
+// 诊疗项目列表：Hero + 搜索 + 分类筛选 + 4 列卡片流 + 分页
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { getServices, getCategories } from '../api/public'
+import Pagination from '../components/Pagination'
 
-// 功能说明：/services 列表页。分类下拉来自数据库（service_categories）；关键词搜索；4 列卡片。
+// 功能说明：/services 列表页。分类下拉来自数据库（service_categories）；关键词搜索；4 列卡片；12/page。
+const PAGE_SIZE = 12
 export default function Services() {
   const [cats, setCats] = useState<{ id: number; name: string }[]>([])
   const [cat, setCat] = useState<number | ''>('')
   const [q, setQ] = useState('')
+  const [page, setPage] = useState(1)
+  const [total, setTotal] = useState(0)
   const [list, setList] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -17,13 +21,24 @@ export default function Services() {
 
   useEffect(() => {
     setLoading(true)
-    const params: any = { page: 1, size: 24 }
+    const params: any = { page, size: PAGE_SIZE }
     if (cat !== '') params.category_id = cat
     if (q.trim()) params.q = q.trim()
     getServices(params)
-      .then((d: any) => setList(d?.list || []))
-      .catch(() => setList([]))
+      .then((d: any) => {
+        setList(d?.list || [])
+        setTotal(d?.total || 0)
+      })
+      .catch(() => {
+        setList([])
+        setTotal(0)
+      })
       .finally(() => setLoading(false))
+  }, [cat, q, page])
+
+  // 筛选/搜索变化时回到第一页
+  useEffect(() => {
+    setPage(1)
   }, [cat, q])
 
   return (
@@ -89,6 +104,11 @@ export default function Services() {
               </div>
             </Link>
           ))}
+        </div>
+
+        {/* 分页 */}
+        <div className="mt-10">
+          <Pagination current={page} pageSize={PAGE_SIZE} total={total} onChange={setPage} />
         </div>
       </div>
     </div>

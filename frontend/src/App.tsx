@@ -1,6 +1,7 @@
 // 前台路由：所有页面挂在 Layout 下（Nav/Footer/咨询悬浮/Toast 共用）
 import { Routes, Route } from 'react-router-dom'
 import Layout from './components/Layout'
+import ScrollToHash from './components/ScrollToHash'
 import { ParentAuthProvider } from './auth/parent'
 import Home from './pages/Home'
 import Services from './pages/Services'
@@ -21,6 +22,7 @@ import DoctorDetail from './pages/DoctorDetail'
 export default function App() {
   return (
     <ParentAuthProvider>
+      <ScrollToHash />
       <Routes>
         <Route element={<Layout />}>
           <Route path="/" element={<Home />} />

@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { getCases, getServices } from '../api/public'
+import Pagination from '../components/Pagination'
 
 // 功能说明：/cases 列表。年龄分桶 3-6/6-9/9-12；项目下拉来自数据库；分页每页 9。
 const BUCKETS = [
@@ -96,12 +97,10 @@ export default function Cases() {
           ))}
         </div>
 
-        {/* 分页 */}
+        {/* 分页：统一风格（紧凑居中 + 共 N 条） */}
         {totalPages > 1 && (
-          <div className="mt-10 flex items-center justify-center gap-2">
-            <button disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="btn-ghost disabled:opacity-40">上一页</button>
-            <span className="px-3 py-2 text-sm text-sub">{page} / {totalPages}</span>
-            <button disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} className="btn-ghost disabled:opacity-40">下一页</button>
+          <div className="mt-10">
+            <Pagination current={page} pageSize={9} total={total} onChange={setPage} />
           </div>
         )}
       </div>

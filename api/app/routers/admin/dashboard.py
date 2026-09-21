@@ -25,8 +25,8 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.deps import get_current_admin, require_permission, store_filter
-from app.models.appointment import Appointment, Guestbook
-from app.models.cms import Article, Case, Service, Store
+from app.models.appointment import Appointment, Guestbook, Schedule
+from app.models.cms import Article, Case, Doctor, Service, Store
 from app.models.system import Admin, Role
 from app.schemas.common import ApiResp
 
@@ -90,22 +90,29 @@ def dashboard_summary(db: Session = Depends(get_db), admin: Admin = Depends(get_
 
 @router.get("/dashboard/todos", dependencies=[Depends(require_permission("dashboard:view"))])
 def dashboard_todos(db: Session = Depends(get_db), admin: Admin = Depends(get_current_admin)):
-    appt_qry = db.query(Appointment).filter(Appointment.is_deleted == 0)
-    appt_qry = store_filter(admin, appt_qry, Appointment, db)
+    # 基线：Appointment ORM 未定义 service/store 的 relationship（项目以 FK 关联为主），
+    # 改用 OUTER JOIN 一次把 service_name / store_name 预取出来，避免 N+1 与访问未定义属性。
+    base = (
+        db.query(Appointment, Service.name.label("svc_name"), Store.name.label("store_name"))
+        .outerjoin(Service, Appointment.service_id == Service.id)
+        .outerjoin(Store, Appointment.store_id == Store.id)
+        .filter(Appointment.is_deleted == 0)
+    )
+    base = store_filter(admin, base, Appointment, db)
 
     today = datetime.now().date().isoformat()
 
     # 最近 5 条待确认预约
-    pending_list = (
-        appt_qry.filter(Appointment.status == "pending")
+    pending_rows = (
+        base.filter(Appointment.status == "pending")
         .order_by(Appointment.created_date.desc())
         .limit(5)
         .all()
     )
 
     # 今日需到诊（已确认且 want_date = 今天）
-    today_arrive = (
-        appt_qry.filter(Appointment.status == "confirmed")
+    today_arrive_rows = (
+        base.filter(Appointment.status == "confirmed")
         .filter(Appointment.want_date == today)
         .order_by(Appointment.want_slot.asc())
         .limit(5)
@@ -122,21 +129,25 @@ def dashboard_todos(db: Session = Depends(get_db), admin: Admin = Depends(get_cu
         .all()
     )
 
-    def appt_dict(a: Appointment):
+    def appt_dict(row) -> dict:
+        a: Appointment = row[0]
         return {
             "id": a.id,
             "appointment_no": a.appointment_no,
             "contact_name": a.contact_name,
             "contact_phone": a.contact_phone,
             "child_name": a.child_name,
-            "service_name": a.service.name if a.service else "",
-            "store_name": a.store.name if a.store else "",
+            "service_name": row[1] or "",
+            "store_name": row[2] or "",
             "want_date": a.want_date,
             "want_slot": a.want_slot,
             "status": a.status,
             "created_date": a.created_date.isoformat() if a.created_date else None,
         }
 
+    # 复用 base 表达式的过滤条件做计数（重建 count 查询，保持语义一致）
+    appt_qry = db.query(Appointment).filter(Appointment.is_deleted == 0)
+    appt_qry = store_filter(admin, appt_qry, Appointment, db)
     return ApiResp(data={
         "counts": {
             "pending": appt_qry.filter(Appointment.status == "pending").count(),
@@ -144,8 +155,8 @@ def dashboard_todos(db: Session = Depends(get_db), admin: Admin = Depends(get_cu
             "cancelled": appt_qry.filter(Appointment.status == "cancelled").count(),
             "guestbook_unread": gb_count,
         },
-        "pending_list": [appt_dict(a) for a in pending_list],
-        "today_arrive": [appt_dict(a) for a in today_arrive],
+        "pending_list": [appt_dict(r) for r in pending_rows],
+        "today_arrive": [appt_dict(r) for r in today_arrive_rows],
         "guestbook_list": [
             {
                 "id": g.id,
@@ -215,6 +226,63 @@ def dashboard_stores(db: Session = Depends(get_db), admin: Admin = Depends(get_c
         total = db.query(Appointment).filter(Appointment.is_deleted == 0, Appointment.store_id == st.id).count()
         completed = db.query(Appointment).filter(Appointment.is_deleted == 0, Appointment.store_id == st.id, Appointment.status == "completed").count()
         items.append({"store_id": st.id, "store_name": st.name, "total": total, "completed": completed})
+    return ApiResp(data=items)
+
+
+@router.get("/dashboard/doctors", dependencies=[Depends(require_permission("dashboard:view"))])
+def dashboard_doctors(db: Session = Depends(get_db), admin: Admin = Depends(get_current_admin)):
+    """各医生号源利用率 / 出诊负荷 / 爽约率（预约流程改造 v2 决策层）。
+
+    - quota_total：该医生未来 14 天号源池（schedules.quota 之和）
+    - used：已占用号数（schedules.used 之和）
+    - utilization：号源利用率 = used / quota_total
+    - confirmed：已确认+已到诊预约数（confirmed_doctor_id 命中）
+    - no_show：爽约数（is_no_show==1）
+    - no_show_rate：爽约率 = no_show / confirmed
+    advisor 仅看本门店医生。
+    """
+    today = datetime.now().date().isoformat()
+    future = (datetime.now().date() + timedelta(days=14)).isoformat()
+    docs_qry = db.query(Doctor).filter(Doctor.is_activate == 1)
+    role = db.get(Role, admin.role_id)
+    if role is not None and role.data_scope == "store" and admin.store_id:
+        docs_qry = docs_qry.filter(Doctor.store_id == admin.store_id)
+    docs = docs_qry.order_by(Doctor.sort.asc()).all()
+    items = []
+    for d in docs:
+        q_total = (
+            db.query(func.coalesce(func.sum(Schedule.quota), 0))
+            .filter(Schedule.doctor_id == d.id, Schedule.work_date >= today, Schedule.work_date <= future)
+            .scalar() or 0
+        )
+        u = (
+            db.query(func.coalesce(func.sum(Schedule.used), 0))
+            .filter(Schedule.doctor_id == d.id, Schedule.work_date >= today, Schedule.work_date <= future)
+            .scalar() or 0
+        )
+        confirmed = (
+            db.query(Appointment)
+            .filter(Appointment.is_deleted == 0, Appointment.confirmed_doctor_id == d.id, Appointment.status.in_(["confirmed", "completed"]))
+            .count()
+        )
+        no_show = (
+            db.query(Appointment)
+            .filter(Appointment.is_deleted == 0, Appointment.confirmed_doctor_id == d.id, Appointment.is_no_show == 1)
+            .count()
+        )
+        items.append({
+            "doctor_id": d.id,
+            "name": d.name,
+            "title": d.title,
+            "store_id": d.store_id,
+            "quota_total": int(q_total),
+            "used": int(u),
+            "utilization": _rate(int(u), int(q_total)),
+            "confirmed": confirmed,
+            "no_show": no_show,
+            "no_show_rate": _rate(no_show, confirmed),
+        })
+    items.sort(key=lambda x: x["utilization"], reverse=True)
     return ApiResp(data=items)
 
 

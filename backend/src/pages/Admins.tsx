@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { Table, Button, Modal, Form, Input, Select, Space, message, Popconfirm, Tag } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { listAdmins, createAdmin, updateAdmin, toggleAdmin, deleteAdmin, listRoles } from '../api/m2'
+import TablePagination from '../components/TablePagination'
 
 interface Row {
   id: number
@@ -18,17 +19,28 @@ const isCJK = (s: string) => /[一-龥]/.test(s)
 
 export default function Admins() {
   const [data, setData] = useState<Row[]>([])
+  const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
   const [roles, setRoles] = useState<any[]>([])
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<Row | null>(null)
   const [form] = Form.useForm()
+  const [page, setPage] = useState(1)
 
-  const load = () => {
+  const load = (p: number = page) => {
     setLoading(true)
-    listAdmins().then((d: any) => setData(Array.isArray(d) ? d : (d?.items ?? []))).catch((e: any) => message.error(e.message)).finally(() => setLoading(false))
+    listAdmins({ page: p, page_size: 10 })
+      .then((d: any) => {
+        const list = Array.isArray(d) ? d : (d?.items ?? [])
+        setData(list)
+        setTotal(Array.isArray(d) ? list.length : (d?.total ?? list.length))
+      })
+      .catch((e: any) => message.error(e.message))
+      .finally(() => setLoading(false))
   }
-  useEffect(() => { load(); listRoles().then((d: any) => setRoles(Array.isArray(d) ? d : (d?.items ?? []))).catch(() => {}) }, [])
+  useEffect(() => { load(1); listRoles().then((d: any) => setRoles(Array.isArray(d) ? d : (d?.items ?? []))).catch(() => {}) }, [])
+
+  const onPageChange = (p: number) => { setPage(p); load(p) }
 
   const openEdit = (r: Row | null) => {
     setEditing(r)
@@ -81,6 +93,9 @@ export default function Admins() {
         <Button type="primary" onClick={() => openEdit(null)}>新增管理员</Button>
       </div>
       <Table rowKey="id" loading={loading} dataSource={data} columns={columns} pagination={false} size="middle" />
+      <div className="mt-3">
+        <TablePagination total={total} pageSize={10} current={page} onChange={onPageChange} />
+      </div>
 
       <Modal title={editing ? `编辑管理员：${editing.username}` : '新增管理员'} open={open} onOk={submit} onCancel={() => setOpen(false)} destroyOnClose>
         <Form form={form} layout="vertical">

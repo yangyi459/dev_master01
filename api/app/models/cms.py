@@ -13,7 +13,7 @@ CMS 业务模型（app.models.cms）
 依据：方案 §5.1/§5.2 表分组与速查卡、§18 字段口径。字段细节以数据库设计文档第 5 章为准。
 """
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import AuditMixin, Base, Text  # Text 已再导出，便于 JSON 字段
@@ -69,6 +69,15 @@ class Service(AuditMixin, Base):
     flow: Mapped[str] = mapped_column(Text, comment="就诊流程(JSON)")
     # 常见问题（JSON 字符串）：[{q,a},...]
     faq: Mapped[str] = mapped_column(Text, comment="常见问题(JSON)")
+    # 富内容章节（前台诊疗项目详情页分章节展示，缺省走前台 FALLBACK）
+    principle: Mapped[str] = mapped_column(Text, comment="治疗原理(纯文本)")
+    suitable: Mapped[str] = mapped_column(Text, comment="适合人群(JSON数组)")
+    unsuitable: Mapped[str] = mapped_column(Text, comment="暂不适合(JSON数组)")
+    prepare: Mapped[str] = mapped_column(Text, comment="术前准备(JSON数组)")
+    aftercare: Mapped[str] = mapped_column(Text, comment="术后注意(JSON数组)")
+    review_cycle: Mapped[str] = mapped_column(Text, comment="复诊周期(纯文本)")
+    risks: Mapped[str] = mapped_column(Text, comment="风险提示(JSON数组)")
+    highlights: Mapped[str] = mapped_column(Text, comment="关键亮点(JSON数组:{label,value})")
     sort: Mapped[int] = mapped_column(Integer, default=0, comment="排序")
     # status：1=上架 / 0=下架（前台只展示上架；可见性仍以 is_activate 为准）
     status: Mapped[int] = mapped_column(Integer, default=1, comment="1=上架 0=下架")
@@ -87,6 +96,12 @@ class Case(AuditMixin, Base):
     age_bucket: Mapped[str] = mapped_column(String(20), comment="年龄分桶 3-6/6-9/9-12")
     anonymous_desc: Mapped[str] = mapped_column(Text, comment="匿名化说明（合规：不暴露可识别信息，见 §15）")
     summary: Mapped[str] = mapped_column(Text, comment="案例摘要")
+    # 富章节（前台案例详情页分章节展示，缺省走前台 FALLBACK）
+    doctor_id: Mapped[int] = mapped_column(ForeignKey("doctors.id"), nullable=True, comment="主诊医生")
+    timeline: Mapped[str] = mapped_column(Text, comment="治疗经过(JSON:{time,title,desc})")
+    advice: Mapped[str] = mapped_column(Text, comment="医生建议(JSON:{title,body})")
+    followup: Mapped[str] = mapped_column(Text, comment="家长回访(JSON:{tag,text})")
+    notes: Mapped[str] = mapped_column(Text, comment="重要提醒(JSON数组)")
     # status：1=已发布 / 0=草稿（见 §18.5）
     status: Mapped[int] = mapped_column(Integer, default=0, comment="1=已发布 0=草稿")
 
@@ -100,6 +115,8 @@ class Article(AuditMixin, Base):
     title: Mapped[str] = mapped_column(String(200), nullable=False, comment="文章标题")
     summary: Mapped[str] = mapped_column(Text, comment="摘要")
     body: Mapped[str] = mapped_column(Text, comment="正文（富文本 HTML）")
+    # 富内容：前台文章详情页「关键要点」卡片，缺省走前台 FALLBACK（按分类）
+    key_points: Mapped[str] = mapped_column(Text, comment="关键要点(JSON数组)")
     cover: Mapped[str] = mapped_column(String(255), comment="封面（逻辑路径）")
     # SEO 字段（见 §7 页面清单 + 技术文档 §10.8 预渲染）
     seo_title: Mapped[str] = mapped_column(String(200), comment="SEO 标题")
@@ -120,11 +137,28 @@ class Doctor(AuditMixin, Base):
     title: Mapped[str] = mapped_column(String(50), comment="职称，如 '主治医师'")
     good_at: Mapped[str] = mapped_column(Text, comment="擅长领域")
     intro: Mapped[str] = mapped_column(Text, comment="个人简介")
-    avatar: Mapped[str] = mapped_column(String(255), comment="头像（逻辑路径）")
+    avatar: Mapped[str] = mapped_column(String(255), comment="头像（逻辑路径，亦作 portrait）")
+    # 预约流程改造（v2）：增强医生档案，前台医生详情页/列表展示用
+    years: Mapped[int] = mapped_column(Integer, default=0, comment="从医年限（年）")
+    graduated: Mapped[str] = mapped_column(String(100), default="", comment="毕业院校")
+    honors: Mapped[str] = mapped_column(Text, default="", comment="荣誉资质（换行分隔）")
+    bio: Mapped[str] = mapped_column(Text, default="", comment="详细履历/资质背景")
+    rating: Mapped[float] = mapped_column(Float, default=5.0, comment="评分 1-5（看板/详情展示）")
+    review_count: Mapped[int] = mapped_column(Integer, default=0, comment="家长评价数")
     schedule_desc: Mapped[str] = mapped_column(String(255), comment="出诊/排班说明")
     sort: Mapped[int] = mapped_column(Integer, default=0, comment="排序")
     # status：1=在岗 / 0=休假（见 §18.5）
     status: Mapped[int] = mapped_column(Integer, default=1, comment="1=在岗 0=休假")
+
+
+# ========== 家长评价 doctor_reviews ==========
+class DoctorReview(AuditMixin, Base):
+    __tablename__ = "doctor_reviews"
+
+    doctor_id: Mapped[int] = mapped_column(ForeignKey("doctors.id"), comment="关联医生")
+    parent_name: Mapped[str] = mapped_column(String(50), default="", comment="家长昵称")
+    rating: Mapped[int] = mapped_column(Integer, default=5, comment="评分 1-5")
+    content: Mapped[str] = mapped_column(Text, default="", comment="评价内容")
 
 
 # ========== 首页配置位 home_items ==========

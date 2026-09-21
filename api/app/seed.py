@@ -27,6 +27,7 @@ from app.models.cms import (
     ArticleCategory,
     Case,
     Doctor,
+    DoctorReview,
     HomeItem,
     Page,
     Service,
@@ -248,6 +249,51 @@ def ensure_homeitem_columns(db):
     db.commit()
 
 
+def ensure_schema_columns(db):
+    """幂等迁移：预约流程改造 v2 新增列（兼容已建库，避免手动 alembic）。
+
+    - doctors：years/graduated/honors/bio/rating/review_count
+    - schedules：quota/used
+    - appointments：chief_complaint/allergy/is_emergency/is_no_show
+    - services：principle/suitable/unsuitable/prepare/aftercare/review_cycle/risks/highlights（富内容章节）
+    - cases：doctor_id/timeline/advice/followup/notes（富章节 + 主诊医生）
+    - articles：key_points（关键要点）
+    doctor_reviews 整表由 Base.metadata.create_all 兜底创建。
+    """
+    dcols = {r[1] for r in db.execute(text("PRAGMA table_info(doctors)")).fetchall()}
+    for col, ddl in [("years", "INTEGER DEFAULT 0"), ("graduated", "VARCHAR(100)"),
+                     ("honors", "TEXT"), ("bio", "TEXT"), ("rating", "FLOAT DEFAULT 5.0"),
+                     ("review_count", "INTEGER DEFAULT 0")]:
+        if col not in dcols:
+            db.execute(text(f"ALTER TABLE doctors ADD COLUMN {col} {ddl}"))
+    scols = {r[1] for r in db.execute(text("PRAGMA table_info(schedules)")).fetchall()}
+    for col, ddl in [("quota", "INTEGER DEFAULT 3"), ("used", "INTEGER DEFAULT 0")]:
+        if col not in scols:
+            db.execute(text(f"ALTER TABLE schedules ADD COLUMN {col} {ddl}"))
+    acols = {r[1] for r in db.execute(text("PRAGMA table_info(appointments)")).fetchall()}
+    for col, ddl in [("chief_complaint", "TEXT"), ("allergy", "TEXT"),
+                     ("is_emergency", "INTEGER DEFAULT 0"), ("is_no_show", "INTEGER DEFAULT 0")]:
+        if col not in acols:
+            db.execute(text(f"ALTER TABLE appointments ADD COLUMN {col} {ddl}"))
+    # 诊疗项目富内容章节
+    svc_cols = {r[1] for r in db.execute(text("PRAGMA table_info(services)")).fetchall()}
+    for col in ["principle", "suitable", "unsuitable", "prepare", "aftercare",
+                "review_cycle", "risks", "highlights"]:
+        if col not in svc_cols:
+            db.execute(text(f"ALTER TABLE services ADD COLUMN {col} TEXT"))
+    # 真实案例富章节 + 主诊医生
+    case_cols = {r[1] for r in db.execute(text("PRAGMA table_info(cases)")).fetchall()}
+    for col, ddl in [("doctor_id", "INTEGER"), ("timeline", "TEXT"), ("advice", "TEXT"),
+                     ("followup", "TEXT"), ("notes", "TEXT")]:
+        if col not in case_cols:
+            db.execute(text(f"ALTER TABLE cases ADD COLUMN {col} {ddl}"))
+    # 口腔科普关键要点
+    art_cols = {r[1] for r in db.execute(text("PRAGMA table_info(articles)")).fetchall()}
+    if "key_points" not in art_cols:
+        db.execute(text("ALTER TABLE articles ADD COLUMN key_points TEXT"))
+    db.commit()
+
+
 def seed_business(db):
     ensure_homeitem_columns(db)
     # ---------------- 门店（3 家，对齐原型，补全真实坐标/地址）----------------
@@ -287,20 +333,84 @@ def seed_business(db):
         ("悦芽口腔（徐汇店）", "孙倩", "主治医师", "儿童洁牙", "耐心细致，深受低龄患儿家长信赖。"),
         ("悦芽口腔（静安店）", "周岚", "主治医师", "早期矫治", "擅长功能性矫治器与儿童咬合管理。"),
     ]
+    # 预约流程改造 v2：医生档案增强（years/graduated/honors/bio/rating/review_count）
+    DOCTOR_DETAIL = {
+        "李雯": dict(years=10, graduated="上海交通大学医学院", honors="中华口腔医学会儿童口腔专委会会员",
+                     bio="深耕儿童龋齿预防，擅长行为引导式涂氟与窝沟封闭，累计服务 5000+ 患儿。", rating=4.9, review_count=132),
+        "王浩": dict(years=15, graduated="四川大学华西口腔医学院", honors="隐适美认证医师 / 中华口腔正畸专委会会员",
+                     bio="专注儿童早期矫治与咬合干预，完成隐形矫治与早期干预案例 800+。", rating=4.8, review_count=98),
+        "张敏": dict(years=8, graduated="南京医科大学", honors="儿童舒适化诊疗认证",
+                     bio="亲和力强，擅长缓解低龄儿童看牙焦虑，建立孩子信任感。", rating=4.9, review_count=120),
+        "陈立": dict(years=22, graduated="北京大学口腔医学院", honors="主任医师 / 省口腔医学会理事",
+                     bio="处理儿童牙体牙髓疑难病例，成功完成儿童根管治疗 2000+。", rating=4.7, review_count=76),
+        "刘洋": dict(years=9, graduated="同济大学", honors="校园口腔筛查主讲",
+                     bio="社区预防干预负责人，推动涂氟进校园公益项目。", rating=4.8, review_count=88),
+        "赵雪": dict(years=12, graduated="武汉大学口腔医学院", honors="功能性矫治器认证",
+                     bio="擅长功能性矫治器设计与长期随访，关注孩子面部发育。", rating=4.8, review_count=70),
+        "孙倩": dict(years=7, graduated="上海健康医学院", honors="低龄患儿安抚认证",
+                     bio="耐心细致，深受低龄患儿家长信赖，擅长首次看牙体验设计。", rating=4.9, review_count=110),
+        "周岚": dict(years=11, graduated="浙江大学医学院", honors="儿童咬合管理认证",
+                     bio="擅长功能性矫治器与儿童咬合管理，提供个性化早期矫治方案。", rating=4.7, review_count=64),
+    }
     doc_sort = {}
     doc_avatar_idx = 0
     doctor_avatars = ["/media/assets/ai_doc_%d.png" % i for i in range(1, 11)]
+    doctor_ids_by_name = {}
     for store_name, name, title, good_at, intro in doctor_specs:
         sid = store_ids.get(store_name)
         if not sid:
             continue
-        if db.query(Doctor).filter(Doctor.store_id == sid, Doctor.name == name).first():
-            continue
         doc_sort[sid] = doc_sort.get(sid, 0) + 1
         doc_avatar_idx += 1
-        db.add(Doctor(store_id=sid, name=name, title=title, good_at=good_at, intro=intro,
-                      avatar=doctor_avatars[doc_avatar_idx - 1], schedule_desc="周二至周六", sort=doc_sort[sid], status=1,
-                      created_at=SYS, updated_at=SYS, created_date=NOW, updated_date=NOW, is_activate=1))
+        avatar = doctor_avatars[doc_avatar_idx - 1]
+        existing = db.query(Doctor).filter(Doctor.store_id == sid, Doctor.name == name).first()
+        if existing:
+            doc = existing
+        else:
+            doc = Doctor(store_id=sid, name=name, title=title, good_at=good_at, intro=intro,
+                         avatar=avatar, schedule_desc="周二至周六", sort=doc_sort[sid], status=1,
+                         created_at=SYS, updated_at=SYS, created_date=NOW, updated_date=NOW, is_activate=1)
+            db.add(doc)
+            db.flush()
+        doctor_ids_by_name[name] = doc.id
+        # 幂等补全档案增强字段（仅当 years 缺省时，避免覆盖后台人工编辑）
+        det = DOCTOR_DETAIL.get(name)
+        if det and (doc.years is None or doc.years == 0):
+            doc.years = det["years"]
+            doc.graduated = det["graduated"]
+            doc.honors = det["honors"]
+            doc.bio = det["bio"]
+            doc.rating = det["rating"]
+            doc.review_count = det["review_count"]
+
+    # 家长评价（每个医生 2 条示例，幂等按 doctor_id 判重）
+    REVIEW_SAMPLES = {
+        "李雯": [("王妈妈", 5, "李医生特别耐心，孩子第一次看牙没有哭闹，涂氟过程很顺利。"),
+                 ("陈爸爸", 5, "讲解很清楚，教了我们日常刷牙方法，很负责。")],
+        "王浩": [("林妈妈", 5, "孩子的早期矫治方案讲得很透彻，复诊安排也合理。"),
+                 ("赵女士", 4, "专业度没得说，等待时间略长。")],
+        "张敏": [("周妈妈", 5, "张医生太会哄孩子了，洁牙全程笑着完成。"),
+                 ("吴爸爸", 5, "环境轻松，孩子不抗拒。")],
+        "陈立": [("黄妈妈", 5, "陈主任经验丰富，根管一次就处理好，孩子少受罪。"),
+                 ("徐先生", 4, "号比较难约，建议提前预约。")],
+        "刘洋": [("沈妈妈", 5, "校园筛查时就见过刘医生，很亲切。"),
+                 ("马爸爸", 4, "预防建议实用。")],
+        "赵雪": [("朱妈妈", 5, "矫治器戴得很舒服，随访跟进及时。"),
+                 ("胡女士", 5, "方案透明，费用也清楚。")],
+        "孙倩": [("郭妈妈", 5, "孙医生哄娃一流，首次看牙体验很好。"),
+                 ("何爸爸", 4, "耐心，赞。")],
+        "周岚": [("高妈妈", 5, "周医生对孩子的咬合管理很专业。"),
+                 ("罗女士", 4, "沟通顺畅。")],
+    }
+    for name, samples in REVIEW_SAMPLES.items():
+        did = doctor_ids_by_name.get(name)
+        if not did:
+            continue
+        for pname, rating, content in samples:
+            if db.query(DoctorReview).filter(DoctorReview.doctor_id == did, DoctorReview.content == content).first():
+                continue
+            db.add(DoctorReview(doctor_id=did, parent_name=pname, rating=rating, content=content,
+                               created_at=SYS, updated_at=SYS, created_date=NOW, updated_date=NOW, is_activate=1))
 
     # ---------------- 项目分类 + 项目（对齐原型「诊疗项目」4 大类）----------------
     service_cats = ["儿童口腔检查", "龋齿防治", "早期矫治", "舒适化治疗"]
@@ -340,6 +450,19 @@ def seed_business(db):
          "评估|松动度检查;麻醉|表麻;拔除|微创取出"),
         ("舒适化治疗", "笑气镇静舒适治疗", "￥600-1200", "3-12岁", "笑气镇静+行为引导，让焦虑孩子在放松中完成治疗。",
          "评估|适应症评估;镇静|笑气吸入准备;治疗|实施诊疗;复苏|观察复苏"),
+        # —— 症状对症补充（解决「症状→项目不相关」）——
+        ("龋齿防治", "龋齿充填（补牙）", "￥300-800", "3-12岁", "微创去腐+树脂充填，保留健康牙体，孩子无痛体验。",
+         "评估|龋坏检查与线片;去腐|微创去腐;充填|树脂美学充填;医嘱|饮食与刷牙"),
+        ("龋齿防治", "儿童根管治疗", "￥800-2000", "4-12岁", "牙髓炎/根尖周炎保髓治疗，保留乳牙与年轻恒牙。",
+         "评估|牙髓状态评估;镇痛|舒适化麻醉;治疗|根管预备充填;复查|定期随访"),
+        ("儿童口腔检查", "牙外伤处理", "￥200-1500", "全龄", "松牙固定、断冠修复、脱位牙再植等急诊处置。",
+         "评估|外伤分级;处置|固定/再植/修复;复查|愈合随访"),
+        ("儿童口腔检查", "牙龈护理（牙周治疗）", "￥150-500", "全龄", "牙龈炎与牙周基础治疗，改善刷牙出血。",
+         "检查|牙周探诊;洁治|龈上洁治;宣教|刷牙方式指导"),
+        ("儿童口腔检查", "牙齿美白", "￥800-2000", "12-18岁", "氟斑牙/色素沉着美学美白，安全低敏。",
+         "评估|着色原因评估;美白|冷光/诊室美白;维护|居家维持"),
+        ("早期矫治", "口腔不良习惯干预", "￥500-2000", "4-10岁", "咬唇、吐舌、口呼吸等习惯矫治，预防牙颌畸形。",
+         "评估|习惯与肌功能评估;干预|肌功能训练/矫治器;随访|习惯纠正"),
     ]
     svc_cover = {
         "儿童早期矫治": "/media/assets/ai_svc_ortho.png",
@@ -351,6 +474,12 @@ def seed_business(db):
         "口腔全面检查": "/media/assets/ai_svc_check.png",
         "乳牙拔除": "/media/assets/ai_svc_sedation.png",
         "笑气镇静舒适治疗": "/media/assets/ai_svc_sedation.png",
+        "龋齿充填（补牙）": "/media/assets/ai_svc_caries.png",
+        "儿童根管治疗": "/media/assets/ai_svc_caries.png",
+        "牙外伤处理": "/media/assets/ai_svc_check.png",
+        "牙龈护理（牙周治疗）": "/media/assets/ai_svc_check.png",
+        "牙齿美白": "/media/assets/ai_svc_check.png",
+        "口腔不良习惯干预": "/media/assets/ai_svc_ortho.png",
     }
     for cat_name, name, price, age, intro, flow in service_specs:
         svc = db.query(Service).filter(Service.name == name).first()
@@ -481,8 +610,11 @@ def seed_business(db):
             db.add(Page(slug=slug, title=title, content="<p>示例内容</p>", status=1,
                         created_at=SYS, updated_at=SYS, created_date=NOW, updated_date=NOW, is_activate=1))
 
-    # ---------------- 排班（每医生固定周网格，便于排班矩阵演示）----------------
-    sched_dates = ["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-05"]
+    # ---------------- 排班（每医生未来 14 天网格，quota=3/used=0，便于演示与实时余号）----------------
+    from datetime import timedelta
+
+    _base = NOW.date()
+    sched_dates = [( _base + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(1, 15)]  # 明天起 14 天
     sched_slots = ["09:00-10:00", "14:00-15:00", "16:00-17:00"]
     for d in db.query(Doctor).all():
         for wd in sched_dates:
@@ -491,7 +623,8 @@ def seed_business(db):
                                              Schedule.slot == slot).first():
                     continue
                 db.add(Schedule(doctor_id=d.id, store_id=d.store_id, work_date=wd, slot=slot,
-                               available=1, created_at=SYS, updated_at=SYS, created_date=NOW, updated_date=NOW, is_activate=1))
+                               available=1, quota=3, used=0,
+                               created_at=SYS, updated_at=SYS, created_date=NOW, updated_date=NOW, is_activate=1))
 
     # ---------------- 家长 + 孩子（基线，已存在则跳过）----------------
     parent = db.query(ParentUser).first()
@@ -535,6 +668,7 @@ def main():
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
+        ensure_schema_columns(db)  # 预约流程改造 v2：幂等加列（doctor_reviews 表由 create_all 创建）
         seed_site_config(db)
         seed_menus(db)
         seed_permissions(db)

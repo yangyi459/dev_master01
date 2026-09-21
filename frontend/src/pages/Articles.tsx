@@ -1,14 +1,18 @@
-// 口腔科普列表：Hero + 关键词搜索 + 分类下拉 + 3 列卡片流 + 空状态
+// 口腔科普列表：Hero + 关键词搜索 + 分类下拉 + 3 列卡片流 + 空状态 + 分页
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { getArticles, getCategories } from '../api/public'
+import Pagination from '../components/Pagination'
 
-// 功能说明：/articles 列表。分类下拉来自数据库（article_categories）；关键词搜索；3 列卡片。
+// 功能说明：/articles 列表。分类下拉来自数据库（article_categories）；关键词搜索；3 列卡片；12/page。
+const PAGE_SIZE = 12
 export default function Articles() {
   const [cats, setCats] = useState<{ id: number; name: string }[]>([])
   const [catMap, setCatMap] = useState<Record<number, string>>({})
   const [cat, setCat] = useState<number | ''>('')
   const [q, setQ] = useState('')
+  const [page, setPage] = useState(1)
+  const [total, setTotal] = useState(0)
   const [list, setList] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -25,13 +29,24 @@ export default function Articles() {
 
   useEffect(() => {
     setLoading(true)
-    const params: any = { page: 1, size: 30 }
+    const params: any = { page, size: PAGE_SIZE }
     if (cat !== '') params.category_id = cat
     if (q.trim()) params.q = q.trim()
     getArticles(params)
-      .then((d: any) => setList(d?.list || []))
-      .catch(() => setList([]))
+      .then((d: any) => {
+        setList(d?.list || [])
+        setTotal(d?.total || 0)
+      })
+      .catch(() => {
+        setList([])
+        setTotal(0)
+      })
       .finally(() => setLoading(false))
+  }, [cat, q, page])
+
+  // 筛选/搜索变化时回到第一页
+  useEffect(() => {
+    setPage(1)
   }, [cat, q])
 
   return (
@@ -83,6 +98,11 @@ export default function Articles() {
               </div>
             </Link>
           ))}
+        </div>
+
+        {/* 分页 */}
+        <div className="mt-10">
+          <Pagination current={page} pageSize={PAGE_SIZE} total={total} onChange={setPage} />
         </div>
       </div>
     </div>

@@ -75,7 +75,8 @@ def create_schedule(payload: ScheduleCreateIn, db: Session = Depends(get_db), ad
     if exist:
         return ApiResp(code=40900, message="该医生此时段已排班")
     s = Schedule(doctor_id=payload.doctor_id, store_id=payload.store_id,
-                 work_date=payload.work_date, slot=payload.slot, available=payload.available)
+                 work_date=payload.work_date, slot=payload.slot,
+                 available=payload.available, quota=payload.quota)
     audit_create(s, admin.username)
     db.add(s)
     db.commit()
@@ -102,7 +103,7 @@ def batch_schedules(payload: ScheduleBatchIn, db: Session = Depends(get_db), adm
                 ).first():
                     continue
                 s = Schedule(doctor_id=did, store_id=payload.store_id, work_date=wd,
-                             slot=slot, available=payload.available)
+                             slot=slot, available=payload.available, quota=payload.quota)
                 audit_create(s, admin.username)
                 db.add(s)
                 created += 1
@@ -116,7 +117,10 @@ def update_schedule(sid: int, payload: ScheduleUpdateIn, db: Session = Depends(g
     s = db.get(Schedule, sid)
     if s is None:
         return ApiResp(code=40400, message="排班不存在")
-    s.available = payload.available
+    if payload.available is not None:
+        s.available = payload.available
+    if payload.quota is not None:
+        s.quota = payload.quota
     audit_update(s, admin.username)
     db.commit()
     return ApiResp(data=ScheduleOut.model_validate(s).model_dump(), message="已更新")

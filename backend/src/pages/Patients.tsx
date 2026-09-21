@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { Table, Tag, Button, Space, Modal, Form, Input, Drawer, message, Descriptions } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { listPatients, getPatient, updatePatient } from '../api/m2'
+import TablePagination from '../components/TablePagination'
 
 interface Row {
   id: number
@@ -77,9 +78,12 @@ export default function Patients() {
       <Table
         rowKey="id" loading={loading} dataSource={data} columns={columns}
         scroll={{ x: 1000 }}
-        pagination={{ total, current: page, pageSize: 10, showTotal: (t) => `共 ${t} 条`, onChange: (p) => setPage(p) }}
+        pagination={false}
         size="middle"
       />
+      <div className="mt-3">
+        <TablePagination total={total} pageSize={10} current={page} onChange={setPage} />
+      </div>
 
       <Modal title="编辑患者标签 / 备注" open={editRow != null} onOk={submitEdit} onCancel={() => setEditRow(null)} destroyOnClose>
         <Form form={form} layout="vertical">

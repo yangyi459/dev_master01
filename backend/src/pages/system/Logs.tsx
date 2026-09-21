@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { Table, Select, Input, Space, Tag, message } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { listLogs } from '../../api/m2'
+import TablePagination from '../../components/TablePagination'
 
 const ACTION_LABEL: Record<string, string> = {
   create: '新增', update: '修改', delete: '删除',
@@ -27,19 +28,29 @@ interface Row {
 
 export default function Logs() {
   const [data, setData] = useState<Row[]>([])
+  const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
   const [action, setAction] = useState<string | undefined>()
   const [targetType, setTargetType] = useState<string | undefined>()
+  const [page, setPage] = useState(1)
 
-  const fetchData = (p: number, act?: string, tt?: string) => {
+  const fetchData = (p: number = page, act?: string, tt?: string) => {
     setLoading(true)
     listLogs({ action: act, target_type: tt, page: p, page_size: 20 })
-      .then((d: any) => setData(d?.items ?? []))
+      .then((d: any) => {
+        setData(d?.items ?? [])
+        setTotal(d?.total ?? 0)
+      })
       .catch((e: any) => message.error(e.message))
       .finally(() => setLoading(false))
   }
 
   useEffect(() => { fetchData(1) }, [])
+
+  const onPageChange = (p: number) => {
+    setPage(p)
+    fetchData(p, action, targetType)
+  }
 
   const columns: ColumnsType<Row> = [
     { title: '操作人', dataIndex: 'creator', width: 120 },
@@ -76,9 +87,12 @@ export default function Logs() {
         loading={loading}
         dataSource={data}
         columns={columns}
-        pagination={{ pageSize: 20 }}
+        pagination={false}
         size="middle"
       />
+      <div className="mt-3">
+        <TablePagination total={total} pageSize={20} current={page} onChange={onPageChange} />
+      </div>
     </div>
   )
 }

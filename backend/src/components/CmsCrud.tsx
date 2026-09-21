@@ -1,8 +1,13 @@
 // 通用 CMS 增删改查组件：列表 + 新增/编辑弹窗 + 删除，驱动于字段配置
+// v2：支持 detailPath 模式 —— 传入路由前缀后，"新增/编辑"改为跳转独立全屏详情页（/new、/edit/:id）；
+//     不传则维持弹窗（权益配置等简单模块向后兼容）。type:'image' 字段渲染图片上传控件（CoverUploader）。
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Table, Button, Modal, Form, Input, InputNumber, Switch, Space, Popconfirm, message } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { apiGet, apiPost, apiPut, apiDelete } from '../api/client'
+import CoverUploader from './CoverUploader'
+import TablePagination from './TablePagination'
 
 // 功能说明：M1 后台以「只读列表 + 基础编辑」为主。该组件用 basePath + columns + fields 配置，
 // 统一实现列表查询、新增、编辑、删除，避免每个模块重复样板代码。
@@ -10,10 +15,15 @@ import { apiGet, apiPost, apiPut, apiDelete } from '../api/client'
 export interface FieldDef {
   name: string
   label: string
-  type?: 'text' | 'textarea' | 'number' | 'switch' | 'image'
+  type?: 'text' | 'textarea' | 'number' | 'switch' | 'image' | 'list'
   required?: boolean
   placeholder?: string
   width?: number
+  // type==='list' 专用：数组型字段（JSON 串收发）
+  // itemShape: 'text' -> 字符串数组（如 适合人群/风险点）
+  // itemShape: 'pair' -> 对象数组（如 就诊流程[{title,desc}]/亮点[{label,value}]），subFields 描述每个子字段
+  itemShape?: 'text' | 'pair'
+  subFields?: { key: string; label: string }[]
 }
 interface Props {
   title: string
@@ -28,6 +38,8 @@ interface Props {
   updateByBody?: boolean
   // 列表/写入时附加到查询串（如 categories 按 ?type=service|article 区分）
   extraQuery?: Record<string, any>
+  // 独立详情页模式：传入列表路由前缀（如 /cms/doctors）后，新增/编辑跳转全屏详情页而非弹窗
+  detailPath?: string
 }
 
 export default function CmsCrud({
@@ -41,20 +53,24 @@ export default function CmsCrud({
   deletePerm,
   updateByBody = false,
   extraQuery,
+  detailPath,
 }: Props) {
   const [data, setData] = useState<any[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<any>(null)
+  const [page, setPage] = useState(1)
   const [form] = Form.useForm()
   const [msg, ctx] = message.useMessage()
+  const navigate = useNavigate()
 
-  const load = async () => {
+  const load = async (p: number = page) => {
     setLoading(true)
     try {
       // 兼容两种返回：{items,total} 分页信封 或 纯数组（categories/pages/home-items/benefits 等）
-      const res: any = await apiGet(basePath, extraQuery)
+      // 默认带 page/page_size，后端若有分页会截取；纯数组接口会忽略。
+      const res: any = await apiGet(basePath, { ...(extraQuery || {}), page: p, page_size: 10 })
       const list: any[] = Array.isArray(res) ? res : (res?.items ?? res?.list ?? [])
       setData(list)
       setTotal(Array.isArray(res) ? list.length : (res?.total ?? list.length))
@@ -65,16 +81,29 @@ export default function CmsCrud({
     }
   }
   useEffect(() => {
-    load()
+    load(1)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  const onPageChange = (p: number) => {
+    setPage(p)
+    load(p)
+  }
+
   const openCreate = () => {
+    if (detailPath) {
+      navigate(`${detailPath}/new`)
+      return
+    }
     setEditing(null)
     form.resetFields()
     setOpen(true)
   }
   const openEdit = (row: any) => {
+    if (detailPath) {
+      navigate(`${detailPath}/edit/${row[rowKey]}`, { state: { row } })
+      return
+    }
     setEditing(row)
     form.setFieldsValue(row)
     setOpen(true)
@@ -89,7 +118,7 @@ export default function CmsCrud({
       } else await apiPost(basePath, values)
       msg.success('保存成功')
       setOpen(false)
-      load()
+      load(page)
     } catch (e: any) {
       msg.error(e.message)
     }
@@ -98,7 +127,7 @@ export default function CmsCrud({
     try {
       await apiDelete(`${basePath}/${id}`)
       msg.success('已删除')
-      load()
+      load(page)
     } catch (e: any) {
       msg.error(e.message)
     }
@@ -138,9 +167,12 @@ export default function CmsCrud({
         loading={loading}
         dataSource={data}
         columns={[...columns, actionColumn]}
-        pagination={{ total, pageSize: 10, showTotal: (t) => `共 ${t} 条` }}
+        pagination={false}
         size="middle"
       />
+      <div className="mt-3">
+        <TablePagination total={total} pageSize={10} current={page} onChange={onPageChange} />
+      </div>
 
       <Modal
         title={editing ? `编辑${title}` : `新增${title}`}
@@ -166,7 +198,7 @@ export default function CmsCrud({
               ) : f.type === 'switch' ? (
                 <Switch />
               ) : f.type === 'image' ? (
-                <Input placeholder={f.placeholder || '图片逻辑路径，如 uploads/2026/08/x.jpg'} />
+                <CoverUploader label="上传图片" />
               ) : (
                 <Input placeholder={f.placeholder} />
               )}

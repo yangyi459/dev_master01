@@ -27,7 +27,7 @@ from app.models.system import (
     RolePermission,
 )
 from app.schemas.appointment import AdminIn, AdminOut, RoleCreateIn, RoleOut, RoleSaveIn
-from app.schemas.common import ApiResp, BusinessError
+from app.schemas.common import ApiResp, BusinessError, Paginated
 from app.services.audit import audit_create, audit_update, write_log
 
 router = APIRouter(prefix="/api/admin", tags=["admin-system"], dependencies=[Depends(get_current_admin)])
@@ -171,8 +171,15 @@ def delete_role(rid: int, db: Session = Depends(get_db), admin: Admin = Depends(
 
 # ================= 管理员账号 =================
 @router.get("/admins", summary="管理员列表")
-def list_admins(db: Session = Depends(get_db), _: Admin = Depends(get_current_admin)):
-    rows = db.query(Admin).order_by(Admin.id.asc()).all()
+def list_admins(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=200),
+    db: Session = Depends(get_db),
+    _: Admin = Depends(get_current_admin),
+):
+    qry = db.query(Admin).order_by(Admin.id.asc())
+    total = qry.count()
+    rows = qry.offset((page - 1) * page_size).limit(page_size).all()
     items = []
     for a in rows:
         role = db.get(Role, a.role_id)
@@ -189,7 +196,7 @@ def list_admins(db: Session = Depends(get_db), _: Admin = Depends(get_current_ad
                 last_login_at=a.last_login_at,
             ).model_dump()
         )
-    return ApiResp(data=items)
+    return ApiResp(data=Paginated(items=items, total=total, page=page, page_size=page_size))
 
 
 @router.post("/admins", summary="新增管理员", dependencies=[Depends(require_permission("system:admin"))])

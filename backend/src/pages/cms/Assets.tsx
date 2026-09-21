@@ -4,7 +4,6 @@ import { Button, Upload, Popconfirm, Tag, message, Tabs, Select, Spin, Space, Ta
 import { UploadOutlined, ReloadOutlined, UndoOutlined } from '@ant-design/icons'
 import { apiGet, apiPost, apiDelete } from '../../api/client'
 import { recountAssets, restoreAsset } from '../../api/m3'
-
 const CATS = ['全部', '首页', '案例', '医生', '文章', '通用']
 
 export default function Assets() {
@@ -148,7 +147,7 @@ export default function Assets() {
                   ) },
                 ]}
                 locale={{ emptyText: '回收站为空（删除后仅 5 秒内可恢复）' }}
-                pagination={{ pageSize: 10 }}
+                pagination={false}
               />
             ),
           },

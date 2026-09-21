@@ -6,8 +6,10 @@ import {
   listAppointments,
   getAppointment,
   confirmAppointment,
+  autoConfirmAppointment,
   arriveAppointment,
   cancelAppointment,
+  noShowAppointment,
   deleteAppointment,
   listFollowups,
   addFollowup,
@@ -15,6 +17,7 @@ import {
   listAdmins,
 } from '../api/m2'
 import { apiGet } from '../api/client'
+import TablePagination from '../components/TablePagination'
 
 const STATUS: Record<string, { label: string; color: string }> = {
   pending: { label: '待确认', color: 'gold' },
@@ -29,7 +32,9 @@ interface Row {
   appointment_no: string
   parent_phone: string
   parent_nickname: string
+  store_id: number
   store_name: string
+  service_id: number
   service_name: string
   child_name: string
   want_date: string
@@ -37,6 +42,10 @@ interface Row {
   status: string
   advisor_name: string
   created_date: string
+  chief_complaint?: string[]
+  allergy?: string
+  is_emergency?: number
+  is_no_show?: number
 }
 
 export default function Appointments() {
@@ -57,6 +66,7 @@ export default function Appointments() {
   const [confirmId, setConfirmId] = useState<number | null>(null)
   const [confirmForm] = Form.useForm()
   const [confirmStore, setConfirmStore] = useState<number | undefined>()
+  const [confirmPrefill, setConfirmPrefill] = useState<{ store_id?: number; date?: string; slot?: string } | null>(null)
   const [assignId, setAssignId] = useState<number | null>(null)
   const [assignForm] = Form.useForm()
 
@@ -89,12 +99,21 @@ export default function Appointments() {
     try {
       await confirmAppointment(confirmId!, v)
       message.success('已确认排期')
-      setConfirmId(null); confirmForm.resetFields(); setConfirmStore(undefined)
+      setConfirmId(null); confirmForm.resetFields(); setConfirmStore(undefined); setConfirmPrefill(null)
       load()
     } catch (e: any) { message.error(e.message) }
   }
+  const doAutoConfirm = (id: number) => {
+    autoConfirmAppointment(id)
+      .then((d: any) => {
+        message.success(`已自动排期：${d?.doctor_name || ''} ${d?.confirmed_date || ''} ${d?.confirmed_slot || ''}`)
+        load()
+      })
+      .catch((e: any) => message.warning(e.message))
+  }
   const doArrive = (id: number) => arriveAppointment(id).then(() => { message.success('已到诊'); load() }).catch((e: any) => message.error(e.message))
   const doCancel = (id: number) => cancelAppointment(id).then(() => { message.success('已取消'); load() }).catch((e: any) => message.error(e.message))
+  const doNoShow = (id: number) => noShowAppointment(id).then(() => { message.success('已标记为爽约'); load() }).catch((e: any) => message.error(e.message))
   const doDelete = (id: number) => deleteAppointment(id).then(() => { message.success('已删除'); load() }).catch((e: any) => message.error(e.message))
   const doAssign = async () => {
     const v = await assignForm.validateFields()
@@ -109,15 +128,28 @@ export default function Appointments() {
     { title: '孩子', dataIndex: 'child_name', width: 90 },
     { title: '意向时段', width: 150, render: (_: any, r: Row) => `${r.want_date} ${r.want_slot}` },
     { title: '状态', dataIndex: 'status', width: 90, render: (s: string) => <Tag color={STATUS[s]?.color}>{STATUS[s]?.label || s}</Tag> },
+    { title: '主诉', dataIndex: 'chief_complaint', width: 130, render: (v?: string[]) => v?.length ? <span className="text-xs">{v.join('、')}</span> : <span className="text-sub">—</span> },
+    { title: '急诊', dataIndex: 'is_emergency', width: 60, render: (v?: number) => v === 1 ? <Tag color="red">急诊</Tag> : null },
+    { title: '爽约', dataIndex: 'is_no_show', width: 60, render: (v?: number) => v === 1 ? <Tag color="default">爽约</Tag> : null },
     { title: '跟进顾问', dataIndex: 'advisor_name', width: 100 },
     { title: '提交时间', dataIndex: 'created_date', width: 160 },
     {
-      title: '操作', key: 'op', width: 220, fixed: 'right',
+      title: '操作', key: 'op', width: 340, fixed: 'right',
       render: (_: any, r: Row) => (
         <Space size={2}>
           <Button type="link" size="small" onClick={() => openDetail(r.id)}>详情</Button>
-          {r.status === 'pending' && <Button type="link" size="small" onClick={() => { setConfirmId(r.id); setConfirmStore(undefined); confirmForm.resetFields() }}>确认排期</Button>}
+          {r.status === 'pending' && <Button type="link" size="small" onClick={() => {
+            setConfirmId(r.id)
+            // 预填：门店/日期/时段从已知的意向信息带入；医生留空（顾问主动选或保持空自动提示）
+            const prefill = { store_id: r.store_id || undefined, date: r.want_date || undefined, slot: r.want_slot || undefined }
+            setConfirmPrefill(prefill)
+            setConfirmStore(r.store_id || undefined)
+            confirmForm.resetFields()
+            confirmForm.setFieldsValue(prefill)
+          }}>确认排期</Button>}
+          {r.status === 'pending' && <Button type="link" size="small" style={{ color: '#FF7A45' }} onClick={() => doAutoConfirm(r.id)}>一键自动排期</Button>}
           {r.status === 'confirmed' && <Button type="link" size="small" onClick={() => doArrive(r.id)}>到诊</Button>}
+          {(r.status === 'confirmed' || r.status === 'completed') && !r.is_no_show && <Button type="link" size="small" onClick={() => doNoShow(r.id)}>爽约</Button>}
           {(r.status === 'pending' || r.status === 'confirmed') && <Button type="link" size="small" danger onClick={() => doCancel(r.id)}>取消</Button>}
           <Popconfirm title="确认删除？" onConfirm={() => doDelete(r.id)}>
             <Button type="link" size="small" danger>删除</Button>
@@ -137,10 +169,13 @@ export default function Appointments() {
 
       <Table
         rowKey="id" loading={loading} dataSource={data} columns={columns}
-        scroll={{ x: 1100 }}
-        pagination={{ total, current: page, pageSize: 10, showTotal: (t) => `共 ${t} 条`, onChange: (p) => setPage(p) }}
+        scroll={{ x: 1400 }}
+        pagination={false}
         size="middle"
       />
+      <div className="mt-3">
+        <TablePagination total={total} pageSize={10} current={page} onChange={setPage} />
+      </div>
 
       {/* 详情抽屉 */}
       <Drawer title="预约详情" width={520} open={detailOpen} onClose={() => setDetailOpen(false)}>
@@ -156,6 +191,10 @@ export default function Appointments() {
               <Descriptions.Item label="确认排期">{detail.confirmed_date} {detail.confirmed_slot}（{detail.confirmed_doctor_name}）</Descriptions.Item>
               <Descriptions.Item label="联系人">{detail.contact_name} {detail.contact_phone}</Descriptions.Item>
               <Descriptions.Item label="备注">{detail.note}</Descriptions.Item>
+              <Descriptions.Item label="主诉">{detail.chief_complaint?.length ? detail.chief_complaint.join('、') : '—'}</Descriptions.Item>
+              <Descriptions.Item label="过敏史">{detail.allergy || '—'}</Descriptions.Item>
+              <Descriptions.Item label="急诊">{detail.is_emergency === 1 ? <Tag color="red">是</Tag> : '否'}</Descriptions.Item>
+              <Descriptions.Item label="爽约">{detail.is_no_show === 1 ? <Tag color="default">是</Tag> : '否'}</Descriptions.Item>
               <Descriptions.Item label="状态"><Tag color={STATUS[detail.status]?.color}>{STATUS[detail.status]?.label}</Tag></Descriptions.Item>
             </Descriptions>
             <div className="mt-4 flex gap-2">
@@ -178,13 +217,27 @@ export default function Appointments() {
       </Drawer>
 
       {/* 确认排期弹窗 */}
-      <Modal title="确认排期" open={confirmId != null} onOk={doConfirm} onCancel={() => { setConfirmId(null); confirmForm.resetFields() }} destroyOnClose>
+      <Modal
+        title={confirmPrefill?.date ? '确认排期（或改派）' : '确认排期'}
+        open={confirmId != null}
+        onOk={doConfirm}
+        onCancel={() => { setConfirmId(null); confirmForm.resetFields(); setConfirmPrefill(null) }}
+        destroyOnClose
+      >
+        {confirmPrefill?.date && (
+          <div className="mb-3 rounded-lg border border-brand/20 bg-[#FFFAF6] px-3 py-2 text-xs text-sub">
+            已根据该预约自动带入 <span className="font-semibold text-brand-ink">意向门店 / 意向日期 / 意向时段</span>，如需改派请直接修改下方字段。
+          </div>
+        )}
         <Form form={confirmForm} layout="vertical">
           <Form.Item name="store_id" label="门店" rules={[{ required: true, message: '请选择门店' }]}>
             <Select options={stores.map((s) => ({ value: s.id, label: s.name }))} onChange={(v) => { setConfirmStore(v); confirmForm.setFieldValue('doctor_id', undefined) }} />
           </Form.Item>
           <Form.Item name="doctor_id" label="医生" rules={[{ required: true, message: '请选择医生' }]}>
-            <Select options={doctorsByStore.map((d) => ({ value: d.id, label: d.name }))} />
+            <Select
+              placeholder={confirmStore ? '请选择医生' : '请先选择门店'}
+              options={doctorsByStore.map((d) => ({ value: d.id, label: `${d.name}（${d.title || ''}）` }))}
+            />
           </Form.Item>
           <Form.Item name="date" label="确认日期" rules={[{ required: true, message: '请选择日期' }]}>
             <Input type="date" />

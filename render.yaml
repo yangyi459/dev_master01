@@ -1,0 +1,48 @@
+# 悦芽口腔 · Render Blueprint 部署配置（免费层）
+# 用法：Render 控制台 → New → Blueprint → 关联本仓库（dev_parent 所在 GitHub 仓库）
+#       Render 会按本文件自动创建 3 个服务并互相连线。
+#
+# 服务域名规则：<服务名>.onrender.com
+#   - API:        yueya-api.onrender.com
+#   - 家长端官网:  yueya-frontend.onrender.com
+#   - 运营端后台:  yueya-admin.onrender.com
+# 上述域名已写进 CORS_ORIGINS / VITE_API_BASE_URL，保持服务名不变即可直接连通。
+# 若想改服务名，请同步修改下面的 envVars。
+
+services:
+  # 1) FastAPI 接口服务（SQLite + 幂等种子数据）
+  - type: web
+    runtime: python
+    name: yueya-api
+    plan: free
+    rootDir: api
+    buildCommand: pip install -r requirements.txt
+    # 先用 seed 幂等建表+灌演示数据，再启动 uvicorn（绑定 Render 注入的 $PORT）
+    startCommand: python -m app.seed && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: CORS_ORIGINS
+        value: https://yueya-frontend.onrender.com,https://yueya-admin.onrender.com
+      - key: JWT_SECRET
+        value: change-me-for-demo-only-2026
+
+  # 2) 家长端官网（React + Vite，静态）
+  - type: web
+    runtime: static
+    name: yueya-frontend
+    rootDir: frontend
+    buildCommand: npm install && npx vite build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_API_BASE_URL
+        value: https://yueya-api.onrender.com
+
+  # 3) 运营端后台（React + AntD + Vite，静态）
+  - type: web
+    runtime: static
+    name: yueya-admin
+    rootDir: backend
+    buildCommand: npm install && npx vite build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_API_BASE_URL
+        value: https://yueya-api.onrender.com

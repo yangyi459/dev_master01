@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -26,6 +27,7 @@ from app.models.cms import (
     ArticleCategory,
     Case,
     Doctor,
+    DoctorReview,
     HomeItem,
     AboutContent,
     Page,
@@ -104,7 +106,7 @@ def list_services(
     category_id: int | None = Query(None),
     q: str | None = Query(None),
     page: int = Query(1, ge=1),
-    page_size: int = Query(10, ge=1, le=50),
+    page_size: int = Query(10, ge=1, le=200, alias="size"),
     db: Session = Depends(get_db),
 ):
     qry = db.query(Service).filter(Service.is_activate == 1, Service.status == 1)
@@ -117,11 +119,13 @@ def list_services(
     items = [
         {
             "id": r.id,
+            "category_id": r.category_id,
             "name": r.name,
             "price_range": r.price_range,
             "cover": mh.media_url(r.cover),
             "age_range": r.age_range,
             "intro": r.intro,
+            "status": r.status,
         }
         for r in rows
     ]
@@ -143,6 +147,17 @@ def get_service(service_id: int, db: Session = Depends(get_db)):
         "intro": r.intro,
         "flow": mh.parse_json(r.flow, []),   # 就诊流程步骤条（前端渲染）
         "faq": mh.parse_json(r.faq, []),     # 常见问题折叠
+        # 富内容章节（缺省由前台 FALLBACK 兜底）
+        "principle": r.principle or "",
+        "suitable": mh.parse_json(r.suitable, []),
+        "unsuitable": mh.parse_json(r.unsuitable, []),
+        "prepare": mh.parse_json(r.prepare, []),
+        "aftercare": mh.parse_json(r.aftercare, []),
+        "review_cycle": r.review_cycle or "",
+        "risks": mh.parse_json(r.risks, []),
+        "highlights": mh.parse_json(r.highlights, []),
+        "category_name": (db.get(ServiceCategory, r.category_id).name
+                          if r.category_id and db.get(ServiceCategory, r.category_id) else ""),
         # SEO 预渲染字段
         "seo_title": r.name,
         "seo_description": r.intro,
@@ -217,6 +232,12 @@ def get_case(case_id: int, db: Session = Depends(get_db)):
         "age_bucket": r.age_bucket,
         "anonymous_desc": r.anonymous_desc,  # 匿名化说明（合规）
         "summary": r.summary,
+        # 富章节（缺省由前台 FALLBACK 兜底）
+        "doctor_id": r.doctor_id,
+        "timeline": mh.parse_json(r.timeline, []),
+        "advice": mh.parse_json(r.advice, []),
+        "followup": mh.parse_json(r.followup, []),
+        "notes": mh.parse_json(r.notes, []),
         # SEO 预渲染字段
         "seo_title": r.title,
         "seo_description": r.summary,
@@ -270,6 +291,7 @@ def get_article(article_id: int, db: Session = Depends(get_db)):
         "author": r.author,
         "summary": r.summary,
         "body": r.body,
+        "key_points": mh.parse_json(r.key_points, []),  # 关键要点（前台卡片）
         "cover": mh.media_url(r.cover),
         "views": r.views,
         "published_at": r.published_at,
@@ -282,7 +304,15 @@ def get_article(article_id: int, db: Session = Depends(get_db)):
 
 
 # ---------- 医生 ----------
-@router.get("/doctors", summary="医生列表（门店筛选）")
+def _next_days(n: int) -> list:
+    """返回从今天起的 n 个日期字符串 YYYY-MM-DD（上海时区）。"""
+    from datetime import timedelta
+
+    base = datetime.now(timezone(timedelta(hours=8))).date()
+    return [(base + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(n)]
+
+
+@router.get("/doctors", summary="医生列表（门店筛选，含未来7天余号）")
 def list_doctors(
     store_id: int | None = Query(None),
     page: int = Query(1, ge=1),
@@ -294,35 +324,92 @@ def list_doctors(
         qry = qry.filter(Doctor.store_id == store_id)
     total = qry.count()
     rows = qry.order_by(Doctor.sort.asc()).offset((page - 1) * page_size).limit(page_size).all()
-    items = [
-        {
+    days = _next_days(7)
+    items = []
+    for r in rows:
+        # 未来 7 天该医生可约余号合计（available==1 且 used<quota）
+        remain = (
+            db.query(func.sum(Schedule.quota - Schedule.used))
+            .filter(
+                Schedule.doctor_id == r.id,
+                Schedule.work_date.in_(days),
+                Schedule.available == 1,
+                Schedule.used < Schedule.quota,
+            )
+            .scalar()
+        ) or 0
+        items.append({
             "id": r.id,
             "store_id": r.store_id,
             "name": r.name,
             "title": r.title,
-            "good_at": r.good_at,
+            "good_at": r.good_at or "",
+            "intro": r.intro or "",
             "avatar": mh.media_url(r.avatar),
+            "years": r.years or 0,
+            "graduated": r.graduated or "",
+            "honors": r.honors or "",
+            "bio": r.bio or "",
+            "rating": r.rating or 5.0,
+            "review_count": r.review_count or 0,
+            "schedule_desc": r.schedule_desc or "",
+            "remaining_7d": int(remain),
             "status": r.status,
-        }
-        for r in rows
-    ]
+        })
     return ApiResp(data=Paginated(items=items, total=total, page=page, page_size=page_size))
 
 
-@router.get("/doctors/{doctor_id}", summary="医生详情")
+@router.get("/doctors/{doctor_id}", summary="医生详情（含未来7天余号+评价）")
 def get_doctor(doctor_id: int, db: Session = Depends(get_db)):
     r = db.query(Doctor).filter(Doctor.id == doctor_id, Doctor.is_activate == 1).first()
     if not r:
         raise HTTPException(status_code=404, detail="医生不存在")
+    days = _next_days(7)
+    # 未来 7 天每日余号（按日期分组，供详情页出诊时间表）
+    scheds = (
+        db.query(Schedule)
+        .filter(Schedule.doctor_id == r.id, Schedule.work_date.in_(days), Schedule.available == 1)
+        .order_by(Schedule.work_date.asc(), Schedule.slot.asc())
+        .all()
+    )
+    by_day: dict = {}
+    for s in scheds:
+        rem = max(s.quota - s.used, 0)
+        by_day.setdefault(s.work_date, []).append({
+            "slot": s.slot,
+            "quota": s.quota,
+            "used": s.used,
+            "remaining": rem,
+            "full": rem <= 0,
+        })
+    schedule_7d = [{"date": d, "slots": by_day.get(d, [])} for d in days]
+    reviews = (
+        db.query(DoctorReview)
+        .filter(DoctorReview.doctor_id == r.id)
+        .order_by(DoctorReview.id.desc())
+        .limit(20)
+        .all()
+    )
     data = {
         "id": r.id,
         "store_id": r.store_id,
         "name": r.name,
         "title": r.title,
-        "good_at": r.good_at,
-        "intro": r.intro,
+        "good_at": r.good_at or "",
+        "intro": r.intro or "",
         "avatar": mh.media_url(r.avatar),
-        "schedule_desc": r.schedule_desc,
+        "years": r.years or 0,
+        "graduated": r.graduated or "",
+        "honors": r.honors or "",
+        "bio": r.bio or "",
+        "rating": r.rating or 5.0,
+        "review_count": r.review_count or 0,
+        "schedule_desc": r.schedule_desc or "",
+        "schedule_7d": schedule_7d,
+        "reviews": [
+            {"id": rv.id, "parent_name": rv.parent_name or "匿名家长", "rating": rv.rating or 5, "content": rv.content or ""}
+            for rv in reviews
+        ],
         "status": r.status,
     }
     return ApiResp(data=data)
@@ -380,14 +467,14 @@ def get_page(slug: str, db: Session = Depends(get_db)):
 
 
 # ---------- 可约时段（医生→时段联动，前台预约页用）----------
-@router.get("/schedules", summary="可约时段查询")
+@router.get("/schedules", summary="可约时段查询（含余号）")
 def list_schedules(
     doctor_id: int | None = Query(None),
     store_id: int | None = Query(None),
     date: str | None = Query(None),
     db: Session = Depends(get_db),
 ):
-    qry = db.query(Schedule).filter(Schedule.is_activate == 1, Schedule.available == 1)
+    qry = db.query(Schedule).filter(Schedule.is_activate == 1, Schedule.available == 1, Schedule.used < Schedule.quota)
     if doctor_id:
         qry = qry.filter(Schedule.doctor_id == doctor_id)
     if store_id:
@@ -402,8 +489,28 @@ def list_schedules(
             "store_id": r.store_id,
             "work_date": r.work_date,
             "slot": r.slot,
+            "quota": r.quota,
+            "used": r.used,
+            "remaining": max(r.quota - r.used, 0),
         }
         for r in rows
+    ]
+    return ApiResp(data=items)
+
+
+# ---------- 家长评价（医生维度）----------
+@router.get("/doctors/{doctor_id}/reviews", summary="医生家长评价列表")
+def list_doctor_reviews(doctor_id: int, db: Session = Depends(get_db)):
+    rows = (
+        db.query(DoctorReview)
+        .filter(DoctorReview.doctor_id == doctor_id)
+        .order_by(DoctorReview.id.desc())
+        .limit(50)
+        .all()
+    )
+    items = [
+        {"id": rv.id, "parent_name": rv.parent_name or "匿名家长", "rating": rv.rating or 5, "content": rv.content or ""}
+        for rv in rows
     ]
     return ApiResp(data=items)
 

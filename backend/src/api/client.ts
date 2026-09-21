@@ -4,7 +4,7 @@ import axios from 'axios'
 // 功能说明：
 // - 请求拦截：从 localStorage 读取 admin_token 注入 Authorization。
 // - 响应拦截：拆 {code,message,data} 信封；code!=0 抛错；40100 跳登录。
-export const http = axios.create({ baseURL: '/', timeout: 15000 })
+export const http = axios.create({ baseURL: import.meta.env.VITE_API_BASE_URL || '/', timeout: 15000 })
 
 http.interceptors.request.use((cfg) => {
   const token = localStorage.getItem('admin_token')

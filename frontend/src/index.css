@@ -26,6 +26,12 @@
   a {
     @apply text-inherit;
   }
+  /* 富文本 / 详情页章节：sticky 顶部导航 (h-16 = 64px) + 留白 = 88px */
+  section[id],
+  .article-html h2,
+  .article-html h3 {
+    scroll-margin-top: 5.5rem;
+  }
 }
 
 @layer components {
